@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Tempel des Schreckens – Online</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="temple-pillars" aria-hidden="true"></div>
+
+  <main class="stage">
+
+    <!-- ===================== ANSICHT 1: LOBBY ===================== -->
+    <section id="view-lobby" class="view view-centered">
+      <h1 class="title">Tempel des Schreckens</h1>
+      <p class="tagline">Vertraue niemandem, bis du weißt, wer Freund oder Feind ist.</p>
+
+      <div class="card">
+        <label for="player-name">Dein Name</label>
+        <input type="text" id="player-name" placeholder="z. B. Lukas" maxlength="20">
+
+        <div class="divider"><span>Raum erstellen oder beitreten</span></div>
+
+        <button id="btn-create-room" class="btn btn-primary">Neuen Raum erstellen</button>
+
+        <div class="join-row">
+          <input type="text" id="room-code-input" placeholder="Raum-Code (z. B. AB3F)" maxlength="6">
+          <button id="btn-join-room" class="btn btn-secondary">Beitreten</button>
+        </div>
+
+        <p id="lobby-error" class="error-text" hidden></p>
+      </div>
+    </section>
+
+    <!-- ===================== ANSICHT 2: WARTERAUM ===================== -->
+    <section id="view-room" class="view view-centered" hidden>
+      <h1 class="title title-small">Warteraum</h1>
+
+      <div class="card">
+        <p class="room-code-label">Raum-Code zum Teilen:</p>
+        <p id="room-code-display" class="room-code-display"></p>
+
+        <div class="divider"><span>Spieler im Raum (<span id="player-count">0</span>)</span></div>
+
+        <ul id="player-list" class="player-list"></ul>
+
+        <button id="btn-start-game" class="btn btn-primary" disabled>
+          Spiel starten (mind. 3 Spieler)
+        </button>
+        <p class="hint-text">Nur wer den Raum erstellt hat, kann starten.</p>
+      </div>
+    </section>
+
+    <!-- ===================== ANSICHT 3: ROLLEN-REVEAL ===================== -->
+    <section id="view-role-reveal" class="view view-centered" hidden>
+      <p class="reveal-instruction">Tippe die Karte an, um deine Rolle zu sehen</p>
+      <div id="role-card" class="role-card">
+        <div class="role-card-inner">
+          <div class="role-card-back">
+            <img src="images/Karakter_Hintergrund.jpg" alt="">
+          </div>
+          <div id="role-card-front" class="role-card-front">
+            <img id="role-card-image" src="" alt="">
+            <p id="role-card-text" class="role-card-text"></p>
+          </div>
+        </div>
+      </div>
+      <button id="btn-role-continue" class="btn btn-primary" hidden>Weiter zum Tempel</button>
+    </section>
+
+    <!-- ===================== ANSICHT 4: SPIELBRETT ===================== -->
+    <section id="view-game" class="view view-game" hidden>
+      <div id="round-banner" class="round-banner" hidden><span id="round-banner-text"></span></div>
+
+      <header class="game-header">
+        <span class="game-round">Runde <span id="round-display">1</span>/4</span>
+        <span id="turn-label" class="turn-label">—</span>
+      </header>
+
+      <!-- Tempel-Spielplan: Spieler sitzen im Kreis, Karten fächerförmig zur Mitte -->
+      <div class="board-wrap">
+        <div class="temple-board">
+          <div id="seats" class="seats"></div>
+          <div class="center-zone">
+            <div id="center-pile" class="center-pile"></div>
+            <div id="remaining-counts" class="remaining-counts"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Eigene Karten (nur der Spieler selbst sieht sie) -->
+      <footer class="my-cards-bar">
+        <span class="panel-heading">Deine Karten</span>
+        <div id="my-hand" class="my-hand"></div>
+      </footer>
+
+      <!-- Eigene Charakterkarte, dauerhaft unten in der Ecke, standardmäßig verdeckt -->
+      <div id="corner-role" class="corner-role" title="Antippen zum Ansehen">
+        <img src="images/Karakter_Hintergrund.jpg" class="corner-role-img" alt="Deine Rolle">
+        <img id="corner-role-front" src="" class="corner-role-img corner-role-front" alt="">
+      </div>
+    </section>
+
+    <!-- ===================== ANSICHT 5: ENDSCREEN ===================== -->
+    <section id="view-end" class="view view-endscreen" hidden>
+      <h1 id="end-title" class="end-title"></h1>
+      <p id="end-message" class="end-message"></p>
+      <ul id="end-roles-list" class="end-roles-list"></ul>
+      <button id="btn-back-to-lobby" class="btn btn-primary">Zurück zum Warteraum</button>
+    </section>
+
+  </main>
+
+  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+
+  <script src="firebase-config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
