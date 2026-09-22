@@ -46,9 +46,14 @@ const roomCodeDisplay = document.getElementById('room-code-display');
 const playerListEl = document.getElementById('player-list');
 const playerCountEl = document.getElementById('player-count');
 const btnStartGame = document.getElementById('btn-start-game');
+const btnToggleReady = document.getElementById('btn-toggle-ready');
+const readyCountEl = document.getElementById('ready-count');
+const btnLeaveRoom = document.getElementById('btn-leave-room');
 
 let currentRoomCode = null;
 let isHost = false;
+let currentHostId = null;
+let latestVotes = {};
 
 // --- Hilfsfunktionen --------------------------------------------------
 
@@ -139,15 +144,13 @@ btnJoinRoom.addEventListener('click', async () => {
   enterRoom(code);
 });
 
-// --- In den Warteraum wechseln und Spielerliste live beobachten -----------
+// --- In den Warteraum wechseln und alles live beobachten -----------------
 function enterRoom(roomCode) {
   currentRoomCode = roomCode;
 
   viewLobby.hidden = true;
   viewRoom.hidden = false;
   roomCodeDisplay.textContent = roomCode;
-
-  btnStartGame.hidden = !isHost; // nur der Host sieht den Start-Button
 
   // "on('value', ...)" hält die Verbindung offen: sobald sich irgendwo
   // in players/ etwas ändert, läuft diese Funktion für ALLE Spieler
@@ -156,16 +159,43 @@ function enterRoom(roomCode) {
     const players = snapshot.val() || {};
     latestPlayers = players; // für den Rollen-/Karten-Zufall beim Start merken
     renderPlayerList(players);
+    renderReadyCount();
+    maybeClaimHost(players); // springt ein, falls der bisherige Host den Raum verlassen hat
   });
 
-  // Reagiert auf Statuswechsel: sobald der Host das Spiel startet, wechseln
-  // ALLE Clients automatisch zur richtigen Ansicht - keine manuelle Aktion nötig.
+  // Wer aktuell Host ist - kann sich durch maybeClaimHost() aendern, sobald
+  // der ursprüngliche Host den Raum verlässt.
+  db.ref('rooms/' + roomCode + '/hostId').on('value', (snapshot) => {
+    currentHostId = snapshot.val();
+    isHost = currentHostId === playerId;
+    btnStartGame.hidden = !isHost;
+    renderPlayerList(latestPlayers); // Host-Markierung in der Liste aktualisieren
+  });
+
+  // Abstimmung "Ich will (nochmal) spielen": startet automatisch, sobald
+  // mehr als die Hälfte der Spieler zugestimmt hat.
+  db.ref('rooms/' + roomCode + '/replayVotes').on('value', (snapshot) => {
+    latestVotes = snapshot.val() || {};
+    renderReadyCount();
+    checkAutoStart();
+  });
+
+  // Reagiert auf Statuswechsel: sobald das Spiel startet, wechseln ALLE
+  // Clients automatisch zur richtigen Ansicht - keine manuelle Aktion nötig.
   let previousStatus = null;
-  db.ref('rooms/' + roomCode + '/status').on('value', (snapshot) => {
+  db.ref('rooms/' + roomCode + '/status').on('value', async (snapshot) => {
     const status = snapshot.val();
     if (status === 'playing' && previousStatus !== 'playing') {
-      // Frischer Spielstart: erst die eigene Rolle enthüllen, danach zum Brett
-      showRoleRevealView();
+      // Frischer Spielstart: pruefen, ob es das erste Spiel in diesem Raum ist.
+      // Ab dem zweiten Spiel sehen nur noch der Host die Enthüllungs-Animation,
+      // alle anderen kommen direkt am Spielbrett an (siehe Wunsch des Nutzers).
+      const gameSnap = await db.ref('rooms/' + roomCode + '/game').get();
+      const g = gameSnap.val();
+      if (g && g.gameNumber > 1 && !isHost) {
+        showGameView();
+      } else {
+        showRoleRevealView();
+      }
     } else if (status === 'playing') {
       showGameView();
     } else if (status === 'ended') {
@@ -180,13 +210,27 @@ function enterRoom(roomCode) {
 
 let latestPlayers = {};
 
+// Springt ein, wenn der aktuelle Host nicht mehr in der Spielerliste steht
+// (z. B. weil er den Raum verlassen hat): der Spieler mit der "kleinsten" ID
+// übernimmt automatisch. transaction() macht das sicher, auch wenn mehrere
+// Clients gleichzeitig reagieren - Firebase löst das Wettrennen sauber auf.
+function maybeClaimHost(players) {
+  const ids = Object.keys(players);
+  if (ids.length === 0) return;
+  db.ref('rooms/' + currentRoomCode + '/hostId').transaction((current) => {
+    if (current && players[current]) return current; // Host ist noch da, nichts ändern
+    return ids.sort()[0]; // deterministisch: alle Clients kommen auf denselben neuen Host
+  });
+}
+
 function renderPlayerList(players) {
   playerListEl.innerHTML = '';
-  const entries = Object.values(players);
+  const entries = Object.entries(players);
 
-  entries.forEach((player) => {
+  entries.forEach(([uid, player]) => {
     const li = document.createElement('li');
-    li.innerHTML = `<span class="player-dot"></span>${escapeHtml(player.name)}`;
+    const hostTag = uid === currentHostId ? ' <span class="host-tag">Host</span>' : '';
+    li.innerHTML = `<span class="player-dot"></span>${escapeHtml(player.name)}${hostTag}`;
     playerListEl.appendChild(li);
   });
 
@@ -194,6 +238,15 @@ function renderPlayerList(players) {
 
   // Start-Button erst ab 3 Spielern aktivieren (Mindestanzahl des Spiels)
   btnStartGame.disabled = entries.length < 3;
+}
+
+// Zeigt an, wie viele Spieler per Abstimmung weiterspielen wollen
+function renderReadyCount() {
+  const n = Object.keys(latestPlayers).length;
+  const ready = Object.values(latestVotes).filter(Boolean).length;
+  readyCountEl.textContent = `${ready} von ${n} bereit`;
+  const amReady = !!latestVotes[playerId];
+  btnToggleReady.textContent = amReady ? 'Bereit ✓ (zurückziehen)' : 'Ich will (nochmal) spielen';
 }
 
 // Einfacher Schutz gegen HTML-Injection über den Namen
@@ -271,11 +324,26 @@ function countTypes(cards) {
 }
 
 // --- Spiel starten: Rollen + Karten zufällig verteilen ---------------------
-btnStartGame.addEventListener('click', async () => {
-  const playerIds = Object.keys(latestPlayers);
+// Gemeinsam genutzt vom Host-Button UND von der Mehrheits-Abstimmung.
+// Ein transaction()-Lock auf den Status verhindert, dass zwei Aufrufe
+// gleichzeitig starten (z. B. Host klickt genau in dem Moment, in dem
+// die Abstimmung die Mehrheit erreicht).
+async function startGameInternal() {
+  const lock = await db.ref('rooms/' + currentRoomCode + '/status')
+    .transaction((current) => (current === 'lobby' ? 'starting' : undefined));
+  if (!lock.committed) return; // ein anderer Client startet bereits
+
+  const roomRef = db.ref('rooms/' + currentRoomCode);
+  const [playersSnap, gamesPlayedSnap] = await Promise.all([
+    roomRef.child('players').get(),
+    roomRef.child('gamesPlayed').get()
+  ]);
+  const players = playersSnap.val() || {};
+  const playerIds = Object.keys(players);
   const n = playerIds.length;
 
   if (n < 3 || n > 10) {
+    await roomRef.update({ status: 'lobby' }); // Lock wieder freigeben
     alert('Tempel des Schreckens braucht 3 bis 10 Spieler.');
     return;
   }
@@ -299,20 +367,23 @@ btnStartGame.addEventListener('click', async () => {
   const gamePlayers = {};
   shuffledPlayerIds.forEach((uid, i) => {
     gamePlayers[uid] = {
-      name: (latestPlayers[uid] || {}).name || '?',
+      name: (players[uid] || {}).name || '?',
       role: rolePool[i],
       hand: countTypes(cardPool.slice(i * 5, i * 5 + 5))
     };
   });
 
-  // Schlüsselkarte auslosen: zufälliger Startspieler
   const startingPlayer = shuffledPlayerIds[Math.floor(Math.random() * n)];
+  const gameNumber = (gamesPlayedSnap.val() || 0) + 1;
 
-  await db.ref('rooms/' + currentRoomCode).update({
+  await roomRef.update({
     status: 'playing',
+    gamesPlayed: gameNumber,
+    replayVotes: null, // Abstimmung für die nächste Runde zurücksetzen
     gamePlayers: gamePlayers,
     game: {
       round: 1,
+      gameNumber: gameNumber,
       cardsPerPlayerThisRound: 5,
       openedThisRound: 0,
       turnPlayerId: startingPlayer,
@@ -320,10 +391,53 @@ btnStartGame.addEventListener('click', async () => {
       totalTrapsFound: 0,
       totalGoldInGame: roomCounts.gold,
       totalTrapsInGame: roomCounts.trap,
+      totalAdventurers: roleCounts.adventurer, // fuer die Rollen-Pool-Anzeige beim Reveal
+      totalGuardians: roleCounts.guardian,
       winner: null,
       revealLog: {}
     }
   });
+}
+
+btnStartGame.addEventListener('click', () => startGameInternal());
+
+// --- Abstimmung "Ich will (nochmal) spielen" --------------------------------
+btnToggleReady.addEventListener('click', async () => {
+  const amReady = !!latestVotes[playerId];
+  await db.ref('rooms/' + currentRoomCode + '/replayVotes/' + playerId).set(!amReady);
+});
+
+// Startet automatisch, sobald mehr als die Hälfte zugestimmt hat
+function checkAutoStart() {
+  const n = Object.keys(latestPlayers).length;
+  const ready = Object.values(latestVotes).filter(Boolean).length;
+  if (n >= 3 && ready > n / 2) {
+    startGameInternal();
+  }
+}
+
+// --- Raum verlassen ----------------------------------------------------------
+btnLeaveRoom.addEventListener('click', async () => {
+  const roomRef = db.ref('rooms/' + currentRoomCode);
+  roomRef.child('players/' + playerId).onDisconnect().cancel();
+  await Promise.all([
+    roomRef.child('players/' + playerId).remove(),
+    roomRef.child('replayVotes/' + playerId).remove()
+  ]);
+
+  // Alle Live-Verbindungen zu diesem Raum sauber trennen
+  roomRef.child('players').off();
+  roomRef.child('hostId').off();
+  roomRef.child('replayVotes').off();
+  roomRef.child('status').off();
+  db.ref('rooms/' + currentRoomCode + '/game').off();
+  db.ref('rooms/' + currentRoomCode + '/gamePlayers').off();
+
+  currentRoomCode = null;
+  isHost = false;
+  gameListenersActive = false;
+  hideAllViews();
+  viewLobby.hidden = false;
 });
 
 // ============================================================
@@ -348,16 +462,30 @@ const roleCardEl = document.getElementById('role-card');
 const roleCardFrontEl = document.getElementById('role-card-front');
 const roleCardImageEl = document.getElementById('role-card-image');
 const roleCardTextEl = document.getElementById('role-card-text');
+const rolePoolInfoEl = document.getElementById('role-pool-info');
 const btnRoleContinue = document.getElementById('btn-role-continue');
 
 async function showRoleRevealView() {
   hideAllViews();
   viewRoleReveal.hidden = false;
 
-  const snap = await db.ref('rooms/' + currentRoomCode + '/gamePlayers/' + playerId + '/role').get();
-  const role = snap.val();
+  const roomRef = db.ref('rooms/' + currentRoomCode);
+  const [roleSnap, gameSnap] = await Promise.all([
+    roomRef.child('gamePlayers/' + playerId + '/role').get(),
+    roomRef.child('game').get()
+  ]);
+  const role = roleSnap.val();
   if (!role) { showGameView(); return; }
   const info = ROLE_INFO[role];
+  const g = gameSnap.val() || {};
+
+  // Zeigt die Rollen-VERTEILUNG aus dem Kartenpool, nicht die tatsächlich
+  // ausgeteilte Anzahl - da manchmal eine Karte unbenutzt bleibt, würde die
+  // exakte Verteilung sonst Rückschlüsse zulassen. So bleibt sie verschleiert.
+  if (g.totalAdventurers != null) {
+    rolePoolInfoEl.textContent =
+      `Diesmal im Spiel: ${g.totalAdventurers} Abenteurer · ${g.totalGuardians} Wächterinnen`;
+  }
 
   roleCardEl.classList.remove('flipped');
   roleCardFrontEl.classList.remove('role-good', 'role-bad');
@@ -411,6 +539,7 @@ function ensureGameListeners() {
 function showGameView() {
   hideAllViews();
   viewGame.hidden = false;
+  document.body.classList.remove('theme-good', 'theme-bad'); // Farb-Hinweis nicht mit ins Spiel nehmen
   ensureGameListeners();
   if (latestGame) renderGame();
 }
@@ -486,12 +615,15 @@ function renderGame() {
   }
 
   // --- Spieler rund um den Tempel, Karten faecherfoermig zur Mitte gedreht ---
-  // Jeder Sitz liegt auf einer Ellipse um die Bildmitte. Der Kartenfaecher wird
-  // tangential gedreht (Winkel + 90 Grad), damit er wie auf dem echten Spielplan
-  // zum Tempel hin zeigt. Der Name bleibt dabei waagerecht lesbar.
+  // Kartenfaecher UND Name werden getrennt positioniert: der Faecher naeher
+  // an der Mitte, der Name auf einem groesseren Radius weiter aussen. So
+  // ueberlappen sich Name und Nachbar-Faecher auch bei vielen Spielern nicht.
+  // Die Schriftgroesse schrumpft zusaetzlich mit steigender Spielerzahl.
   const uids = Object.keys(latestGamePlayers);
   const n = uids.length;
   seatsEl.innerHTML = '';
+
+  const nameScale = n <= 5 ? 1 : n <= 7 ? 0.85 : n <= 9 ? 0.72 : 0.62;
 
   uids.forEach((uid, i) => {
     // Eigener Platz immer unten, die anderen im Uhrzeigersinn darum herum
@@ -499,8 +631,10 @@ function renderGame() {
     const slot = myIndex >= 0 ? (i - myIndex + n) % n : i;
     const angle = (2 * Math.PI * slot) / n + Math.PI / 2; // Slot 0 = unten
 
-    const left = 50 + 34 * Math.cos(angle);
-    const top  = 50 + 31 * Math.sin(angle);
+    const left = 50 + 30 * Math.cos(angle);
+    const top  = 50 + 27 * Math.sin(angle);
+    const nameLeft = 50 + 45 * Math.cos(angle);
+    const nameTop  = 50 + 41 * Math.sin(angle);
     const fanRotation = (angle * 180) / Math.PI + 90; // tangential zur Mitte
 
     const entry = latestGamePlayers[uid];
@@ -532,14 +666,23 @@ function renderGame() {
         <img src="${IMG.charBack}" class="seat-char-card" alt="Charakterkarte">
         <div class="seat-cards">${cardsHtml}</div>
       </div>
-      <span class="seat-name">
-        ${isTurn ? `<img src="${IMG.key}" class="seat-key" alt="Schluessel">` : ''}
-        ${escapeHtml(name)}${isMe ? ' (du)' : ''}
-      </span>
     `;
 
     if (canPick) seat.addEventListener('click', () => revealCard(uid));
     seatsEl.appendChild(seat);
+
+    // Name als eigenes Element auf groesserem Radius - bleibt immer waagerecht
+    // und kollidiert dadurch nicht mit dem Kartenfaecher der Nachbarn.
+    const nameEl = document.createElement('span');
+    nameEl.className = 'seat-name' + (isTurn ? ' seat-name-active' : '');
+    nameEl.style.left = nameLeft + '%';
+    nameEl.style.top = nameTop + '%';
+    nameEl.style.setProperty('--name-scale', nameScale);
+    nameEl.innerHTML = `
+      ${isTurn ? `<img src="${IMG.key}" class="seat-key" alt="Schluessel">` : ''}
+      ${escapeHtml(name)}${isMe ? ' (du)' : ''}
+    `;
+    seatsEl.appendChild(nameEl);
   });
 
   // --- Wie viele Karten welcher Art noch unentdeckt im Tempel liegen ---
@@ -721,5 +864,7 @@ btnBackToLobby.addEventListener('click', async () => {
   document.body.classList.remove('theme-good', 'theme-bad');
   db.ref('rooms/' + currentRoomCode + '/game').off();
   db.ref('rooms/' + currentRoomCode + '/gamePlayers').off();
-  await db.ref('rooms/' + currentRoomCode).update({ status: 'lobby', gamePlayers: null, game: null });
+  await db.ref('rooms/' + currentRoomCode).update({
+    status: 'lobby', gamePlayers: null, game: null, replayVotes: null
+  });
 });

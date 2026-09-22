@@ -219,6 +219,30 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   flex-shrink: 0;
 }
 
+.host-tag {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--stone-900);
+  background: var(--gold-300);
+  padding: 2px 7px;
+  border-radius: 10px;
+  letter-spacing: 0.03em;
+}
+
+.btn-danger {
+  background: transparent;
+  border: 1px solid var(--fire-500);
+  color: var(--fire-500);
+}
+.btn-danger:hover { background: rgba(193, 74, 58, 0.15); }
+
+.role-pool-info {
+  margin: -6px 0 4px;
+  font-size: clamp(0.8rem, 2.4vw, 0.95rem);
+  opacity: 0.7;
+}
+
 /* ============================================================
    ROLLEN-REVEAL
    ============================================================ */
@@ -230,7 +254,7 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 }
 
 .role-card {
-  width: min(60vw, 33dvh, 260px);   /* 33dvh Breite = 50dvh Hoehe, passt immer auf den Schirm */
+  width: min(72vw, 40dvh, 320px);   /* 40dvh Breite = 60dvh Hoehe, passt immer auf den Schirm */
   aspect-ratio: 2 / 3;
   perspective: 1200px;
   cursor: pointer;
@@ -336,7 +360,7 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 
 /* Kartengroesse haengt an der Brettgroesse, damit nichts gestaucht wird.
    Steht bewusst auf den Kindern, weil ein Container sich nicht selbst messen kann. */
-.seats, .center-zone { --card-w: clamp(13px, 4.2cqw, 34px); }
+.seats, .center-zone { --card-w: clamp(18px, 6cqw, 52px); }
 
 .seats { position: absolute; inset: 0; }
 
@@ -384,14 +408,26 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 }
 
 .seat-name {
+  position: absolute;
+  transform: translate(-50%, -50%);
   display: inline-flex;
   align-items: center;
   gap: 3px;
   font-family: var(--font-display);
-  font-size: clamp(0.6rem, 2cqw, 0.9rem);
+  /* --name-scale wird pro Spieler per JS gesetzt (schrumpft bei vielen Spielern) */
+  font-size: calc(clamp(0.7rem, 2.4cqw, 1rem) * var(--name-scale, 1));
   color: #fff;
   text-shadow: 0 1px 5px #000, 0 0 10px #000;
   white-space: nowrap;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: rgba(0,0,0,0.35);
+  pointer-events: none;   /* darf Klicks auf die Karten dahinter nicht blockieren */
+}
+
+.seat-name-active {
+  background: rgba(201, 162, 75, 0.35);
+  box-shadow: 0 0 0 1px var(--gold-400);
 }
 
 .seat-key {
@@ -478,7 +514,7 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 .my-hand { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
 
 .my-card {
-  width: clamp(26px, 7vw, 44px);
+  width: clamp(38px, 10vw, 64px);
   aspect-ratio: 2 / 3;
   object-fit: cover;
   border-radius: 3px;
@@ -596,7 +632,7 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 }
 
 .end-role-image {
-  width: clamp(54px, 11vw, 110px);
+  width: clamp(70px, 15vw, 150px);
   aspect-ratio: 2 / 3;
   object-fit: cover;
   border-radius: 5px;

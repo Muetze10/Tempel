@@ -54,13 +54,21 @@
         <button id="btn-start-game" class="btn btn-primary" disabled>
           Spiel starten (mind. 3 Spieler)
         </button>
-        <p class="hint-text">Nur wer den Raum erstellt hat, kann starten.</p>
+        <p class="hint-text">Nur der Host kann direkt starten.</p>
+
+        <div class="divider"><span>Oder abstimmen</span></div>
+        <button id="btn-toggle-ready" class="btn btn-secondary">Ich will (nochmal) spielen</button>
+        <p id="ready-count" class="hint-text">0 von 0 bereit</p>
+
+        <div class="divider"><span></span></div>
+        <button id="btn-leave-room" class="btn btn-danger">Raum verlassen</button>
       </div>
     </section>
 
     <!-- ===================== ANSICHT 3: ROLLEN-REVEAL ===================== -->
     <section id="view-role-reveal" class="view view-centered" hidden>
       <p class="reveal-instruction">Tippe die Karte an, um deine Rolle zu sehen</p>
+      <p id="role-pool-info" class="role-pool-info"></p>
       <div id="role-card" class="role-card">
         <div class="role-card-inner">
           <div class="role-card-back">
