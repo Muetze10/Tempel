@@ -182,29 +182,50 @@ function enterRoom(roomCode) {
 
   // Reagiert auf Statuswechsel: sobald das Spiel startet, wechseln ALLE
   // Clients automatisch zur richtigen Ansicht - keine manuelle Aktion nötig.
-  let previousStatus = null;
+  //
+  // WICHTIG: Wir vergleichen bewusst die gameNumber (nicht einen "vorheriger
+  // Status war X"-Merker). Der Start läuft über eine transaction() (Lock),
+  // und Firebase kann bei transaction() beim auslösenden Client mehrfach/
+  // optimistisch feuern - ein simpler "previousStatus"-Vergleich verpasst
+  // dadurch manchmal genau den Client, der den Start ausgelöst hat (meist
+  // der Host), und der sieht dann keinen Rollen-Reveal mehr.
+  let lastRevealedGameNumber = 0;
   db.ref('rooms/' + roomCode + '/status').on('value', async (snapshot) => {
     const status = snapshot.val();
-    if (status === 'playing' && previousStatus !== 'playing') {
-      // Frischer Spielstart: pruefen, ob es das erste Spiel in diesem Raum ist.
-      // Ab dem zweiten Spiel sehen nur noch der Host die Enthüllungs-Animation,
-      // alle anderen kommen direkt am Spielbrett an (siehe Wunsch des Nutzers).
+    if (status === 'playing') {
       const gameSnap = await db.ref('rooms/' + roomCode + '/game').get();
       const g = gameSnap.val();
-      if (g && g.gameNumber > 1 && !isHost) {
-        showGameView();
+      const gn = g ? g.gameNumber : 0;
+
+      if (gn && gn !== lastRevealedGameNumber) {
+        lastRevealedGameNumber = gn;
+        // Host-Status HIER frisch aus der DB lesen statt der lokalen isHost-
+        // Variable zu vertrauen: die wird von einem separaten Listener
+        // gesetzt und kann in seltenen Fällen noch nicht aktuell sein,
+        // genau in dem Moment, in dem ein neues Spiel losgeht.
+        const hostSnap = await db.ref('rooms/' + roomCode + '/hostId').get();
+        const amHostNow = hostSnap.val() === playerId;
+        // Ab dem zweiten Spiel sehen nur noch der Host die Enthüllungs-Animation,
+        // alle anderen kommen direkt am Spielbrett an.
+        if (gn > 1 && !amHostNow) {
+          showGameView();
+        } else {
+          showRoleRevealView();
+        }
       } else {
-        showRoleRevealView();
+        showGameView(); // dieses Spiel wurde bereits enthüllt (z. B. erneuter Listener-Aufruf)
       }
-    } else if (status === 'playing') {
-      showGameView();
     } else if (status === 'ended') {
-      showGameView(); // Board-Listener müssen weiterlaufen, damit latestGame/latestGamePlayers aktuell sind
+      // Die kurze Pause, bevor Runde/Sieger feststehen, passiert bereits
+      // BEIM SCHREIBEN in revealCard() (siehe dort) - wenn dieser Status
+      // hier ankommt, ist sie also schon vorbei. Direkt anzeigen.
+      ensureGameListeners();
+      const gameSnap = await db.ref('rooms/' + roomCode + '/game').get();
+      latestGame = gameSnap.val();
       showEndView();
     } else if (status === 'lobby') {
       showRoomView();
     }
-    previousStatus = status;
   });
 }
 
@@ -563,6 +584,45 @@ const roundBannerTextEl = document.getElementById('round-banner-text');
 const cornerRoleEl = document.getElementById('corner-role');
 const cornerRoleFrontEl = document.getElementById('corner-role-front');
 
+let lastMyHandRound = 0; // merkt sich, für welche Runde die Flip-Animation schon lief
+
+// Baut die eigenen Karten als kleine Flip-Karten.
+// animate=true (Rundenstart): erst verdeckt zeigen, dann reihum aufdecken.
+// animate=false (z. B. ein anderer Spieler deckt zwischendurch eine meiner
+// Karten auf): direkt aufgedeckt zeigen, ohne die Animation zu wiederholen.
+function renderMyHand(hand, animate) {
+  myHandEl.innerHTML = '';
+  const types = [];
+  ['gold', 'trap', 'empty'].forEach((type) => {
+    for (let i = 0; i < hand[type]; i++) types.push(type);
+  });
+
+  if (types.length === 0) {
+    myHandEl.innerHTML = '<span class="empty-hint">Alle deine Karten wurden aufgedeckt.</span>';
+    return;
+  }
+
+  types.forEach((type, idx) => {
+    const flip = document.createElement('div');
+    flip.className = 'my-card-flip' + (animate ? '' : ' no-anim');
+    flip.innerHTML = `
+      <div class="my-card-inner">
+        <img src="${IMG.karteBack}" class="my-card-face my-card-back" alt="">
+        <img src="${CARD_IMAGES[type]}" class="my-card-face my-card-front" alt="${CARD_LABELS[type]}" title="${CARD_LABELS[type]}">
+      </div>
+    `;
+    myHandEl.appendChild(flip);
+
+    if (animate) {
+      // Leicht gestaffelt, zeitlich abgestimmt darauf, dass die große
+      // Rundenansage (falls vorhanden) gerade verblasst ist.
+      setTimeout(() => flip.classList.add('flipped'), 1700 + idx * 90);
+    } else {
+      flip.classList.add('flipped');
+    }
+  });
+}
+
 // Große Rundenansage, die kurz über dem Bildschirm eingeblendet wird
 function announceRound(roundNumber) {
   roundBannerTextEl.textContent = 'Runde ' + roundNumber;
@@ -587,23 +647,13 @@ function renderGame() {
     : turnPlayerName + ' hat den Schlüssel';
   turnLabelEl.classList.toggle('turn-mine', isMyTurn);
 
-  // --- Eigene Karten als kleine Bilder ---
+  // --- Eigene Karten: beim Rundenstart erst verdeckt, dann aufdecken -----
+  // (und danach aufgedeckt bleiben, bis die nächste Runde beginnt)
   const myHand = latestGamePlayers[playerId] ? latestGamePlayers[playerId].hand : null;
-  myHandEl.innerHTML = '';
   if (myHand) {
-    ['gold', 'trap', 'empty'].forEach((type) => {
-      for (let i = 0; i < myHand[type]; i++) {
-        const img = document.createElement('img');
-        img.src = CARD_IMAGES[type];
-        img.className = 'my-card';
-        img.alt = CARD_LABELS[type];
-        img.title = CARD_LABELS[type];
-        myHandEl.appendChild(img);
-      }
-    });
-    if (myHand.empty + myHand.gold + myHand.trap === 0) {
-      myHandEl.innerHTML = '<span class="empty-hint">Alle deine Karten wurden aufgedeckt.</span>';
-    }
+    const isNewRound = game.round !== lastMyHandRound;
+    renderMyHand(myHand, isNewRound);
+    lastMyHandRound = game.round;
   }
 
   // --- Eigene Charakterkarte in der Ecke (verdeckt) ---
@@ -770,25 +820,30 @@ async function revealCard(targetUid) {
   const newGoldFound = game.totalGoldFound + (type === 'gold' ? 1 : 0);
   const newTrapsFound = game.totalTrapsFound + (type === 'trap' ? 1 : 0);
 
-  const updates = {};
-  updates['gamePlayers/' + targetUid + '/hand'] = targetHand;
-  updates['game/revealLog/' + Date.now()] = { round: game.round, playerId: targetUid, type: type };
-  updates['game/openedThisRound'] = newOpenedThisRound;
-  updates['game/totalGoldFound'] = newGoldFound;
-  updates['game/totalTrapsFound'] = newTrapsFound;
+  // --- Phase 1: der Reveal selbst - wird SOFORT geschrieben und ist bei
+  // allen Spielern direkt sichtbar (die Karte landet im Ablegestapel). ---
+  const revealUpdates = {};
+  revealUpdates['gamePlayers/' + targetUid + '/hand'] = targetHand;
+  revealUpdates['game/revealLog/' + Date.now()] = { round: game.round, playerId: targetUid, type: type };
+  revealUpdates['game/openedThisRound'] = newOpenedThisRound;
+  revealUpdates['game/totalGoldFound'] = newGoldFound;
+  revealUpdates['game/totalTrapsFound'] = newTrapsFound;
 
-  // --- Sieg-Bedingungen ---
+  // --- Was als Nächstes passiert, wird JETZT schon berechnet (auf Basis
+  // des einen konsistenten Standes von oben), aber noch nicht geschrieben. ---
+  // WICHTIG: Gold-Sieg wird VOR "Runde 4 zuende" geprüft. Ist die letzte
+  // Karte der letzten Runde zufällig auch die letzte Goldkarte, gewinnen
+  // dadurch korrekt die Abenteurer statt der Wächterinnen "weil die Zeit um ist".
+  let followUpUpdates = null;
+
   if (newGoldFound === game.totalGoldInGame) {
-    updates['status'] = 'ended';
-    updates['game/winner'] = 'adventurer';
+    followUpUpdates = { status: 'ended', 'game/winner': 'adventurer' };
   } else if (newTrapsFound === game.totalTrapsInGame) {
-    updates['status'] = 'ended';
-    updates['game/winner'] = 'guardian';
+    followUpUpdates = { status: 'ended', 'game/winner': 'guardian' };
   } else if (newOpenedThisRound === Object.keys(gamePlayers).length) {
     // Runde vorbei
     if (game.round === 4) {
-      updates['status'] = 'ended';
-      updates['game/winner'] = 'guardian';
+      followUpUpdates = { status: 'ended', 'game/winner': 'guardian' };
     } else {
       // Restliche Karten einsammeln, mischen, neu austeilen (eine weniger pro Spieler)
       const nextRoundCards = game.cardsPerPlayerThisRound - 1;
@@ -800,20 +855,30 @@ async function revealCard(targetUid) {
         for (let i = 0; i < hand.trap; i++) remainingPool.push('trap');
       });
       const shuffled = shuffleArray(remainingPool);
+      followUpUpdates = {};
       Object.keys(gamePlayers).forEach((uid, i) => {
-        updates['gamePlayers/' + uid + '/hand'] =
+        followUpUpdates['gamePlayers/' + uid + '/hand'] =
           countTypes(shuffled.slice(i * nextRoundCards, i * nextRoundCards + nextRoundCards));
       });
-      updates['game/round'] = game.round + 1;
-      updates['game/cardsPerPlayerThisRound'] = nextRoundCards;
-      updates['game/openedThisRound'] = 0;
-      updates['game/turnPlayerId'] = targetUid;
+      followUpUpdates['game/round'] = game.round + 1;
+      followUpUpdates['game/cardsPerPlayerThisRound'] = nextRoundCards;
+      followUpUpdates['game/openedThisRound'] = 0;
+      followUpUpdates['game/turnPlayerId'] = targetUid;
     }
   } else {
-    updates['game/turnPlayerId'] = targetUid; // Schlüssel wandert weiter
+    // Normaler Zug, nichts endet - der Schlüssel wandert direkt weiter,
+    // hier muss niemand auf irgendetwas warten.
+    revealUpdates['game/turnPlayerId'] = targetUid;
   }
 
-  await roomRef.update(updates);
+  await roomRef.update(revealUpdates);
+
+  if (followUpUpdates) {
+    // Kurze Pause: alle sehen die zuletzt aufgedeckte Karte noch, bevor die
+    // nächste Runde angekündigt wird oder der Sieger-Screen erscheint.
+    await new Promise((resolve) => setTimeout(resolve, 1800));
+    await roomRef.update(followUpUpdates);
+  }
 }
 
 // ============================================================

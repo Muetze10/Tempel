@@ -513,14 +513,39 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 
 .my-hand { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
 
-.my-card {
+/* Eigene Karten als Flip-Karten: starten verdeckt, drehen sich beim
+   Rundenstart einmal auf und bleiben danach offen liegen. */
+.my-card-flip {
   width: clamp(38px, 10vw, 64px);
   aspect-ratio: 2 / 3;
+  perspective: 800px;
+}
+
+.my-card-inner {
+  position: relative;
+  width: 100%; height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.6s cubic-bezier(0.4, 0.1, 0.2, 1);
+}
+
+.my-card-flip.flipped .my-card-inner { transform: rotateY(180deg); }
+
+/* Re-Renders, die nicht animieren sollen (z. B. eine Karte wurde
+   zwischendurch von jemand anderem aufgedeckt), ueberspringen den Dreh. */
+.my-card-flip.no-anim .my-card-inner { transition: none; }
+
+.my-card-face {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
   object-fit: cover;
   border-radius: 3px;
   border: 1px solid rgba(201,162,75,0.5);
   box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+  backface-visibility: hidden;
 }
+
+.my-card-front { transform: rotateY(180deg); }
 
 .empty-hint { font-size: 0.8rem; opacity: 0.6; }
 
@@ -660,6 +685,6 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .btn, .role-card-inner, .seat-card-back, .corner-role-front { transition: none; }
+  .btn, .role-card-inner, .my-card-inner, .seat-card-back, .corner-role-front { transition: none; }
   .center-card, .end-title, .end-role-item { animation: none; }
 }
