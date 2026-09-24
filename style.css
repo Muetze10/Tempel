@@ -360,7 +360,7 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 
 /* Kartengroesse haengt an der Brettgroesse, damit nichts gestaucht wird.
    Steht bewusst auf den Kindern, weil ein Container sich nicht selbst messen kann. */
-.seats, .center-zone { --card-w: clamp(18px, 6cqw, 52px); }
+.seats, .center-zone { --card-w: clamp(22px, 7.5cqw, 68px); }
 
 .seats { position: absolute; inset: 0; }
 
@@ -381,11 +381,13 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 .seat-pickable:hover { background: rgba(201, 162, 75, 0.35); }
 .seat-pickable:hover .seat-card-back { transform: rotate(var(--tilt)) translateY(calc(var(--lift) * -1 - 5px)); }
 
-/* Der Faecher wird als Ganzes zur Tempelmitte hin gedreht */
+/* Der Faecher wird als Ganzes zur Tempelmitte hin gedreht UND bei vielen
+   Spielern etwas verkleinert (--scale kommt aus JS), damit sich Nachbar-
+   Faecher auf dem Kreis nicht beruehren. */
 .seat-fan {
   display: flex;
   align-items: flex-end;
-  transform: rotate(var(--fan, 0deg));
+  transform: rotate(var(--fan, 0deg)) scale(var(--scale, 1));
   transform-origin: center;
 }
 
@@ -395,11 +397,22 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   aspect-ratio: 2 / 3;
   object-fit: cover;
   border-radius: 2px;
-  border: 1px solid rgba(255,255,255,0.45);
   box-shadow: 0 2px 5px rgba(0,0,0,0.6);
 }
 
-.seat-char-card { margin-right: 3px; }
+/* Charakterkarte bekommt einen sichtbar eigenen Rahmen/Bereich (goldener statt
+   weißer Rand, deutlicher Abstand, leicht angehoben), damit sie klar NICHT
+   wie eine weitere Schatzkammer-Karte wirkt. */
+.seat-char-card {
+  border: 2px solid var(--gold-400);
+  margin-right: calc(var(--card-w) * 0.45);   /* deutlicher Abstand statt nur 3px */
+  transform: translateY(calc(var(--card-w) * -0.12));  /* leicht angehoben = eigener Bereich */
+  box-shadow: 0 3px 8px rgba(0,0,0,0.7), 0 0 0 3px rgba(201,162,75,0.25);
+}
+
+.seat-card-back {
+  border: 1px solid rgba(255,255,255,0.45);
+}
 
 .seat-card-back {
   margin-left: calc(var(--card-w) * -0.28);   /* leicht ueberlappend wie echte Karten */
@@ -430,9 +443,21 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   box-shadow: 0 0 0 1px var(--gold-400);
 }
 
-.seat-key {
-  width: clamp(10px, 2.4cqw, 20px);
-  filter: drop-shadow(0 0 5px var(--gold-300));
+/* Schlüsselkarte: eigenes, großes Element auf eigenem Radius (siehe app.js) -
+   eindeutig als "das ist die Schlüsselkarte" erkennbar, nicht nur ein
+   kleines Icon neben dem Namen. Goldener Glüh-Rand + Drehung als Signal. */
+.turn-key {
+  position: absolute;
+  transform: translate(-50%, -50%) rotate(-12deg);
+  width: calc(var(--card-w) * 1.15 * var(--key-scale, 1));
+  filter: drop-shadow(0 0 10px var(--gold-300)) drop-shadow(0 3px 8px rgba(0,0,0,0.7));
+  pointer-events: none;
+  animation: key-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes key-pulse {
+  0%, 100% { filter: drop-shadow(0 0 8px var(--gold-300)) drop-shadow(0 3px 8px rgba(0,0,0,0.7)); }
+  50%      { filter: drop-shadow(0 0 16px var(--gold-300)) drop-shadow(0 3px 8px rgba(0,0,0,0.7)); }
 }
 
 /* Mitte: Ablegestapel + Restkarten-Zaehler */
@@ -501,7 +526,7 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   justify-content: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding-right: clamp(54px, 13vw, 82px);  /* Platz fuer die Charakterkarte in der Ecke */
+  padding-right: clamp(80px, 18vw, 120px);  /* Platz fuer die groessere Charakterkarte in der Ecke */
 }
 
 .panel-heading {
@@ -555,7 +580,7 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   right: calc(10px + env(safe-area-inset-right, 0px));
   bottom: calc(10px + env(safe-area-inset-bottom, 0px));
   z-index: 40;
-  width: clamp(40px, 10vw, 62px);
+  width: clamp(64px, 15vw, 100px);
   aspect-ratio: 2 / 3;
   border-radius: 4px;
   overflow: hidden;
@@ -677,7 +702,14 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 .end-role-item.role-good .end-role-label { color: var(--blue-300); }
 .end-role-item.role-bad  .end-role-label { color: var(--red-300); }
 
-#btn-back-to-lobby { max-width: 260px; }
+.end-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+#btn-back-to-lobby, #btn-leave-game { width: auto; min-width: 200px; max-width: 260px; }
 
 /* Hochformat/Handy: Brett quadratischer, damit der Kreis nicht flach wird */
 @media (max-aspect-ratio: 1/1) {

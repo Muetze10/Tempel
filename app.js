@@ -199,19 +199,9 @@ function enterRoom(roomCode) {
 
       if (gn && gn !== lastRevealedGameNumber) {
         lastRevealedGameNumber = gn;
-        // Host-Status HIER frisch aus der DB lesen statt der lokalen isHost-
-        // Variable zu vertrauen: die wird von einem separaten Listener
-        // gesetzt und kann in seltenen Fällen noch nicht aktuell sein,
-        // genau in dem Moment, in dem ein neues Spiel losgeht.
-        const hostSnap = await db.ref('rooms/' + roomCode + '/hostId').get();
-        const amHostNow = hostSnap.val() === playerId;
-        // Ab dem zweiten Spiel sehen nur noch der Host die Enthüllungs-Animation,
-        // alle anderen kommen direkt am Spielbrett an.
-        if (gn > 1 && !amHostNow) {
-          showGameView();
-        } else {
-          showRoleRevealView();
-        }
+        // Jeder Spieler sieht bei JEDEM Spiel (auch dem zweiten, dritten, ...)
+        // seine eigene Rollen-Enthüllung - keine Ausnahme mehr für den Host.
+        showRoleRevealView();
       } else {
         showGameView(); // dieses Spiel wurde bereits enthüllt (z. B. erneuter Listener-Aufruf)
       }
@@ -437,8 +427,8 @@ function checkAutoStart() {
   }
 }
 
-// --- Raum verlassen ----------------------------------------------------------
-btnLeaveRoom.addEventListener('click', async () => {
+// --- Raum verlassen (von überall: Warteraum ODER Endscreen) -----------------
+async function leaveRoom() {
   const roomRef = db.ref('rooms/' + currentRoomCode);
   roomRef.child('players/' + playerId).onDisconnect().cancel();
   await Promise.all([
@@ -457,9 +447,12 @@ btnLeaveRoom.addEventListener('click', async () => {
   currentRoomCode = null;
   isHost = false;
   gameListenersActive = false;
+  document.body.classList.remove('theme-good', 'theme-bad');
   hideAllViews();
   viewLobby.hidden = false;
-});
+}
+
+btnLeaveRoom.addEventListener('click', () => leaveRoom());
 
 // ============================================================
 // ANSICHTEN
@@ -665,15 +658,15 @@ function renderGame() {
   }
 
   // --- Spieler rund um den Tempel, Karten faecherfoermig zur Mitte gedreht ---
-  // Kartenfaecher UND Name werden getrennt positioniert: der Faecher naeher
-  // an der Mitte, der Name auf einem groesseren Radius weiter aussen. So
-  // ueberlappen sich Name und Nachbar-Faecher auch bei vielen Spielern nicht.
-  // Die Schriftgroesse schrumpft zusaetzlich mit steigender Spielerzahl.
+  // Kartenfaecher, Name UND Schluessel werden getrennt positioniert (je ein
+  // eigener Radius), damit sich bei vielen Spielern nichts ueberlappt. Ab 6+
+  // Spielern schrumpft zusaetzlich ein Skalierungsfaktor Faecher und Schrift,
+  // damit die Sitze trotz mehr Spielern auf dem Kreis Platz haben.
   const uids = Object.keys(latestGamePlayers);
   const n = uids.length;
   seatsEl.innerHTML = '';
 
-  const nameScale = n <= 5 ? 1 : n <= 7 ? 0.85 : n <= 9 ? 0.72 : 0.62;
+  const seatScale = n <= 5 ? 1 : n <= 7 ? 0.85 : n <= 9 ? 0.72 : 0.6;
 
   uids.forEach((uid, i) => {
     // Eigener Platz immer unten, die anderen im Uhrzeigersinn darum herum
@@ -685,6 +678,11 @@ function renderGame() {
     const top  = 50 + 27 * Math.sin(angle);
     const nameLeft = 50 + 45 * Math.cos(angle);
     const nameTop  = 50 + 41 * Math.sin(angle);
+    // Der Schluessel liegt AUF EINEM EIGENEN Radius zwischen Faecher und
+    // Name - so kollidiert er mit keinem von beiden und ist trotzdem klar
+    // dem richtigen Spieler zugeordnet.
+    const keyLeft = 50 + 38 * Math.cos(angle);
+    const keyTop  = 50 + 34 * Math.sin(angle);
     const fanRotation = (angle * 180) / Math.PI + 90; // tangential zur Mitte
 
     const entry = latestGamePlayers[uid];
@@ -711,8 +709,10 @@ function renderGame() {
         style="--tilt:${spread * 5}deg; --lift:${Math.abs(spread) * 2}px">`;
     }
 
+    // Charakterkarte bewusst abgesetzt (eigene Klasse mit Versatz + Rahmen),
+    // damit sie nicht unterbewusst als eine der Schatzkammer-Karten durchgeht.
     seat.innerHTML = `
-      <div class="seat-fan" style="--fan:${fanRotation}deg">
+      <div class="seat-fan" style="--fan:${fanRotation}deg; --scale:${seatScale}">
         <img src="${IMG.charBack}" class="seat-char-card" alt="Charakterkarte">
         <div class="seat-cards">${cardsHtml}</div>
       </div>
@@ -727,12 +727,22 @@ function renderGame() {
     nameEl.className = 'seat-name' + (isTurn ? ' seat-name-active' : '');
     nameEl.style.left = nameLeft + '%';
     nameEl.style.top = nameTop + '%';
-    nameEl.style.setProperty('--name-scale', nameScale);
-    nameEl.innerHTML = `
-      ${isTurn ? `<img src="${IMG.key}" class="seat-key" alt="Schluessel">` : ''}
-      ${escapeHtml(name)}${isMe ? ' (du)' : ''}
-    `;
+    nameEl.style.setProperty('--name-scale', seatScale);
+    nameEl.textContent = name + (isMe ? ' (du)' : '');
     seatsEl.appendChild(nameEl);
+
+    // Schluessel: groß, eigenes Element, eigener Radius - eindeutig sichtbar,
+    // wer gerade am Zug ist, statt als kleines Icon neben dem Namen unterzugehen.
+    if (isTurn) {
+      const keyEl = document.createElement('img');
+      keyEl.src = IMG.key;
+      keyEl.alt = 'Schlüssel';
+      keyEl.className = 'turn-key';
+      keyEl.style.left = keyLeft + '%';
+      keyEl.style.top = keyTop + '%';
+      keyEl.style.setProperty('--key-scale', seatScale);
+      seatsEl.appendChild(keyEl);
+    }
   });
 
   // --- Wie viele Karten welcher Art noch unentdeckt im Tempel liegen ---
@@ -888,6 +898,7 @@ const endTitle = document.getElementById('end-title');
 const endMessage = document.getElementById('end-message');
 const endRolesList = document.getElementById('end-roles-list');
 const btnBackToLobby = document.getElementById('btn-back-to-lobby');
+const btnLeaveGame = document.getElementById('btn-leave-game');
 
 function renderEndView() {
   const game = latestGame;
@@ -918,8 +929,10 @@ function renderEndView() {
     endRolesList.appendChild(li);
   });
 
-  btnBackToLobby.hidden = !isHost;
+  // Beide Buttons stehen jetzt JEDEM zur Verfügung, nicht nur dem Host.
 }
+
+btnLeaveGame.addEventListener('click', () => leaveRoom());
 
 btnBackToLobby.addEventListener('click', async () => {
   gameListenersActive = false;
