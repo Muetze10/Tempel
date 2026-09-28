@@ -219,6 +219,17 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   flex-shrink: 0;
 }
 
+.stats-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+  opacity: 0.85;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .host-tag {
   margin-left: auto;
   font-size: 0.72rem;
@@ -339,6 +350,8 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 
 .turn-label.turn-mine { color: var(--gold-300); opacity: 1; font-weight: 600; }
 
+.btn-skip { width: auto; padding: 6px 12px; font-size: 0.78rem; }
+
 /* Der Spielplan nimmt den gesamten verbleibenden Platz ein */
 .board-wrap {
   flex: 1 1 auto;
@@ -376,9 +389,7 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   transition: background 0.2s ease;
 }
 
-.seat-active { background: rgba(201, 162, 75, 0.22); box-shadow: 0 0 0 2px var(--gold-400); }
 .seat-pickable { cursor: pointer; }
-.seat-pickable:hover { background: rgba(201, 162, 75, 0.35); }
 .seat-pickable:hover .seat-card-back { transform: rotate(var(--tilt)) translateY(calc(var(--lift) * -1 - 5px)); }
 
 /* Der Faecher wird als Ganzes zur Tempelmitte hin gedreht UND bei vielen
@@ -391,7 +402,6 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   transform-origin: center;
 }
 
-.seat-char-card,
 .seat-card-back {
   width: var(--card-w);
   aspect-ratio: 2 / 3;
@@ -400,25 +410,22 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   box-shadow: 0 2px 5px rgba(0,0,0,0.6);
 }
 
-/* Charakterkarte bekommt einen sichtbar eigenen Rahmen/Bereich (goldener statt
-   weißer Rand, deutlicher Abstand, leicht angehoben), damit sie klar NICHT
-   wie eine weitere Schatzkammer-Karte wirkt. */
-.seat-char-card {
-  border: 2px solid var(--gold-400);
-  margin-right: calc(var(--card-w) * 0.45);   /* deutlicher Abstand statt nur 3px */
-  transform: translateY(calc(var(--card-w) * -0.12));  /* leicht angehoben = eigener Bereich */
-  box-shadow: 0 3px 8px rgba(0,0,0,0.7), 0 0 0 3px rgba(201,162,75,0.25);
+/* Der Kartenfaecher darf nicht umbrechen (display:flex statt inline-Bilder) -
+   genau das war die Ursache dafuer, dass Karten in eine 2./3. Zeile rutschten. */
+.seat-cards {
+  display: flex;
 }
 
 .seat-card-back {
   border: 1px solid rgba(255,255,255,0.45);
-}
-
-.seat-card-back {
-  margin-left: calc(var(--card-w) * -0.28);   /* leicht ueberlappend wie echte Karten */
+  /* --ov wird pro Sitzplatz per JS gesetzt: mehr Karten = engere Ueberlappung,
+     damit die Karten trotzdem gross bleiben und nicht in Nachbar-Faecher ragen. */
+  margin-left: calc(var(--card-w) * var(--ov, -0.28));
   transform: rotate(var(--tilt, 0deg)) translateY(calc(var(--lift, 0px) * -1));
   transition: transform 0.15s ease;
 }
+
+.seat-cards .seat-card-back:first-child { margin-left: 0; }
 
 .seat-name {
   position: absolute;
@@ -436,11 +443,6 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   border-radius: 10px;
   background: rgba(0,0,0,0.35);
   pointer-events: none;   /* darf Klicks auf die Karten dahinter nicht blockieren */
-}
-
-.seat-name-active {
-  background: rgba(201, 162, 75, 0.35);
-  box-shadow: 0 0 0 1px var(--gold-400);
 }
 
 /* Schlüsselkarte: eigenes, großes Element auf eigenem Radius (siehe app.js) -
@@ -526,7 +528,7 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   justify-content: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding-right: clamp(80px, 18vw, 120px);  /* Platz fuer die groessere Charakterkarte in der Ecke */
+  padding-right: calc(clamp(110px, min(30vw, 34dvh), 220px) + 14px);  /* Platz fuer die Charakterkarte in der Ecke */
 }
 
 .panel-heading {
@@ -565,7 +567,7 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   width: 100%; height: 100%;
   object-fit: cover;
   border-radius: 3px;
-  border: 1px solid rgba(201,162,75,0.5);
+  border: 1px solid rgba(255,255,255,0.45);
   box-shadow: 0 2px 8px rgba(0,0,0,0.6);
   backface-visibility: hidden;
 }
@@ -580,7 +582,7 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   right: calc(10px + env(safe-area-inset-right, 0px));
   bottom: calc(10px + env(safe-area-inset-bottom, 0px));
   z-index: 40;
-  width: clamp(64px, 15vw, 100px);
+  width: clamp(110px, min(30vw, 34dvh), 220px);
   aspect-ratio: 2 / 3;
   border-radius: 4px;
   overflow: hidden;
