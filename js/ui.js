@@ -28,29 +28,6 @@ const btnStartGame = document.getElementById('btn-start-game');
 const btnToggleReady = document.getElementById('btn-toggle-ready');
 const readyCountEl = document.getElementById('ready-count');
 const btnLeaveRoom = document.getElementById('btn-leave-room');
-const statsListEl = document.getElementById('stats-list');
-
-// Zeigt ein paar "Auszeichnungen" aus den gesammelten Raum-Statistiken.
-// stats sieht pro Spieler so aus: { name, games, wins, guardian, traps, gold }
-function renderStats(stats) {
-  if (!statsListEl) return;
-  const entries = Object.values(stats || {}).filter((s) => s.games > 0);
-  if (entries.length === 0) { statsListEl.innerHTML = ''; return; }
-
-  // Kleine Helfer-Funktion: findet den Spieler mit dem hoechsten Wert in "key"
-  const topOf = (key) => entries.reduce((a, b) => (b[key] > a[key] ? b : a), entries[0]);
-
-  const awards = [
-    ['🏆 Meiste Siege', topOf('wins'), 'wins'],
-    ['🗡️ Öfteste Wächterin', topOf('guardian'), 'guardian'],
-    ['💀 Pechvogel (meiste Fallen)', topOf('traps'), 'traps'],
-    ['✨ Glückspilz (meistes Gold)', topOf('gold'), 'gold']
-  ].filter(([, player, key]) => player[key] > 0);
-
-  statsListEl.innerHTML = awards
-    .map(([label, player, key]) => `<li>${label}: <strong>${escapeHtml(player.name)}</strong> (${player[key]})</li>`)
-    .join('');
-}
 
 function showError(message) {
   lobbyError.textContent = message;

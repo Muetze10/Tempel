@@ -124,39 +124,6 @@ async function startGameInternal() {
   });
 }
 
-// --- Statistiken: nach Spielende einmal (nur vom Host, siehe firebase.js)
-// fortschreiben. Liegen unter rooms/{code}/stats/{uid} und ueberleben daher
-// auch, wenn zwischenzeitlich alle den Raum verlassen und spaeter per Code
-// wieder einsteigen.
-async function updateStatsAfterGame(game, gamePlayers) {
-  const statsRef = db.ref('rooms/' + currentRoomCode + '/stats');
-  const snap = await statsRef.get();
-  const stats = snap.val() || {};
-
-  // Wer hat wie oft Gold bzw. eine Falle "abbekommen" (bei ihm aufgedeckt)?
-  const trapCounts = {};
-  const goldCounts = {};
-  Object.values(game.revealLog || {}).forEach((entry) => {
-    if (entry.type === 'trap') trapCounts[entry.playerId] = (trapCounts[entry.playerId] || 0) + 1;
-    if (entry.type === 'gold') goldCounts[entry.playerId] = (goldCounts[entry.playerId] || 0) + 1;
-  });
-
-  const updates = {};
-  Object.keys(gamePlayers).forEach((uid) => {
-    const p = gamePlayers[uid];
-    const s = stats[uid] || { name: p.name, games: 0, wins: 0, guardian: 0, traps: 0, gold: 0 };
-    s.name = p.name; // Namensaenderungen mitnehmen
-    s.games = (s.games || 0) + 1;
-    if (p.role === game.winner) s.wins = (s.wins || 0) + 1;
-    if (p.role === 'guardian') s.guardian = (s.guardian || 0) + 1;
-    s.traps = (s.traps || 0) + (trapCounts[uid] || 0);
-    s.gold = (s.gold || 0) + (goldCounts[uid] || 0);
-    updates[uid] = s;
-  });
-
-  await statsRef.update(updates);
-}
-
 // --- Abstimmung "Ich will (nochmal) spielen" --------------------------------
 async function handleToggleReady() {
   const amReady = !!latestVotes[playerId];
@@ -278,27 +245,45 @@ async function revealCard(targetUid) {
       if (game.round === 4) {
         followUpUpdates = { status: 'ended', 'game/winner': 'guardian' };
       } else {
-        // Restliche Karten einsammeln, mischen, neu austeilen (eine weniger pro Spieler)
-        const nextRoundCards = game.cardsPerPlayerThisRound - 1;
-        const remainingPool = [];
-        Object.keys(gamePlayers).forEach((uid) => {
-          const hand = uid === targetUid ? targetHand : gamePlayers[uid].hand;
-          for (let i = 0; i < hand.empty; i++) remainingPool.push('empty');
-          for (let i = 0; i < hand.gold; i++) remainingPool.push('gold');
-          for (let i = 0; i < hand.trap; i++) remainingPool.push('trap');
-        });
-        const shuffled = shuffleArray(remainingPool);
-        followUpUpdates = {};
-        Object.keys(gamePlayers).forEach((uid, i) => {
-          followUpUpdates['gamePlayers/' + uid + '/hand'] =
-            countTypes(shuffled.slice(i * nextRoundCards, i * nextRoundCards + nextRoundCards));
-          // Neue Austeilung markieren - jeder Client animiert daran das Aufdecken
-          followUpUpdates['gamePlayers/' + uid + '/dealId'] = game.gameNumber + '-' + (game.round + 1);
-        });
-        followUpUpdates['game/round'] = game.round + 1;
-        followUpUpdates['game/cardsPerPlayerThisRound'] = nextRoundCards;
-        followUpUpdates['game/openedThisRound'] = 0;
-        followUpUpdates['game/turnPlayerId'] = targetUid;
+        // Restliche Karten einsammeln, mischen, neu austeilen - nur an
+        // Spieler, die noch im Raum sind (latestPlayers). Wer gegangen ist,
+        // scheidet ab jetzt aus; seine Karten bleiben aber im Umlauf, sonst
+        // wuerden Gold/Fallen aus dem Spiel verschwinden.
+        const presentUids = Object.keys(gamePlayers).filter((uid) => latestPlayers[uid]);
+
+        if (presentUids.length < 2) {
+          // Fast alle weg - Spiel kann nicht sinnvoll weitergehen.
+          followUpUpdates = { status: 'ended', 'game/winner': 'guardian' };
+        } else {
+          const nextRoundCards = game.cardsPerPlayerThisRound - 1;
+          const remainingPool = [];
+          Object.keys(gamePlayers).forEach((uid) => {
+            const hand = uid === targetUid ? targetHand : gamePlayers[uid].hand;
+            for (let i = 0; i < hand.empty; i++) remainingPool.push('empty');
+            for (let i = 0; i < hand.gold; i++) remainingPool.push('gold');
+            for (let i = 0; i < hand.trap; i++) remainingPool.push('trap');
+          });
+          const shuffled = shuffleArray(remainingPool);
+          const extraCards = shuffled.length - nextRoundCards * presentUids.length; // von Gegangenen "geerbt"
+
+          followUpUpdates = {};
+          let dealt = 0;
+          presentUids.forEach((uid, i) => {
+            const count = nextRoundCards + (i < extraCards ? 1 : 0);
+            followUpUpdates['gamePlayers/' + uid + '/hand'] = countTypes(shuffled.slice(dealt, dealt + count));
+            followUpUpdates['gamePlayers/' + uid + '/dealId'] = game.gameNumber + '-' + (game.round + 1);
+            dealt += count;
+          });
+          Object.keys(gamePlayers).filter((uid) => !latestPlayers[uid]).forEach((uid) => {
+            followUpUpdates['gamePlayers/' + uid] = null; // Sitz verschwindet
+          });
+
+          followUpUpdates['game/round'] = game.round + 1;
+          followUpUpdates['game/cardsPerPlayerThisRound'] = nextRoundCards;
+          followUpUpdates['game/openedThisRound'] = 0;
+          followUpUpdates['game/turnPlayerId'] =
+            presentUids.includes(targetUid) ? targetUid : presentUids[Math.floor(Math.random() * presentUids.length)];
+        }
       }
     }
     // Normaler Zug: Der Schlüssel liegt durch Schritt 1 schon beim Zielspieler.

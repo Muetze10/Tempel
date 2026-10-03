@@ -139,8 +139,40 @@ async function handleJoinRoom() {
 }
 
 // --- In den Warteraum wechseln und alles live beobachten -----------------
+// onDisconnect() greift meist zuverlaessig, aber nicht immer sofort (z. B.
+// Handy-Netzwechsel, Tab eingefroren) - dann steht ein Spieler noch in der
+// Lobby, obwohl er laengst weg ist. Deshalb zusaetzlich ein Herzschlag: jeder
+// Client meldet sich alle 15s, der Host entfernt alle, die 45s nichts mehr
+// von sich hoeren liessen.
+let heartbeatTimer = null;
+let staleCheckTimer = null;
+
+function startPresenceCheck(roomCode) {
+  const lastSeenRef = db.ref('rooms/' + roomCode + '/players/' + playerId + '/lastSeen');
+  const ping = () => lastSeenRef.set(firebase.database.ServerValue.TIMESTAMP);
+  ping();
+  heartbeatTimer = setInterval(ping, 15000);
+
+  staleCheckTimer = setInterval(async () => {
+    const snap = await db.ref('rooms/' + roomCode + '/players').get();
+    const players = snap.val() || {};
+    const now = Date.now();
+    const updates = {};
+    Object.entries(players).forEach(([uid, p]) => {
+      if (p.lastSeen && now - p.lastSeen > 45000) updates[uid] = null;
+    });
+    if (Object.keys(updates).length) db.ref('rooms/' + roomCode + '/players').update(updates);
+  }, 20000);
+}
+
+function stopPresenceCheck() {
+  clearInterval(heartbeatTimer);
+  clearInterval(staleCheckTimer);
+}
+
 function enterRoom(roomCode) {
   currentRoomCode = roomCode;
+  startPresenceCheck(roomCode);
 
   viewLobby.hidden = true;
   viewRoom.hidden = false;
@@ -167,12 +199,6 @@ function enterRoom(roomCode) {
         }
       });
     }
-  });
-
-  // Statistiken (Siege, Rollen-, Gold-/Fallen-Haeufigkeit) ueberleben leere
-  // Raeume und werden beim Wiederbetreten sofort wieder angezeigt.
-  db.ref('rooms/' + roomCode + '/stats').on('value', (snapshot) => {
-    renderStats(snapshot.val() || {});
   });
 
   // Wer aktuell Host ist - kann sich durch maybeClaimHost() aendern, sobald
@@ -273,6 +299,7 @@ function maybeClaimHost(players) {
 
 // --- Raum verlassen (von überall: Warteraum ODER Endscreen) -----------------
 async function leaveRoom() {
+  stopPresenceCheck();
   const roomRef = db.ref('rooms/' + currentRoomCode);
   roomRef.child('players/' + playerId).onDisconnect().cancel();
   await Promise.all([
@@ -285,7 +312,6 @@ async function leaveRoom() {
   roomRef.child('hostId').off();
   roomRef.child('replayVotes').off();
   roomRef.child('status').off();
-  roomRef.child('stats').off();
   db.ref('rooms/' + currentRoomCode + '/game').off();
   db.ref('rooms/' + currentRoomCode + '/gamePlayers').off();
 
