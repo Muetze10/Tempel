@@ -15,18 +15,17 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
 // --- Eigene Spieler-ID -------------------------------------------------
-// Jeder Browser bekommt eine zufällige ID, die in localStorage gespeichert
-// wird. So "merkt" die Seite sich den Spieler auch nach einem Reload,
-// ohne dass ein Login-System nötig ist.
-function getPlayerId() {
-  let id = localStorage.getItem('tds_player_id');
-  if (!id) {
-    id = 'p_' + Math.random().toString(36).slice(2, 10);
-    localStorage.setItem('tds_player_id', id);
-  }
-  return id;
+// Anonymer Login: Firebase vergibt pro Browser eine feste uid (bleibt nach
+// Reload erhalten). Die Sicherheitsregeln prüfen genau diese uid.
+let playerId = null;
+const authReady = firebase.auth().signInAnonymously()
+.then((cred) => { playerId = cred.user.uid; });
+
+// Wartet auf den Login; zeigt einen Fehler, falls er scheitert
+async function ensureLogin() {
+  try { await authReady; return true; }
+  catch (e) { showError('Anmeldung fehlgeschlagen. Seite neu laden?'); return false; }
 }
-const playerId = getPlayerId();
 
 // Erzeugt einen 4-stelligen Raum-Code aus Großbuchstaben/Zahlen (z. B. "K7QM")
 function generateRoomCode() {
@@ -71,6 +70,7 @@ async function handleCreateRoom() {
     return;
   }
   clearError();
+  if (!(await ensureLogin())) return;
 
   const roomCode = generateRoomCode();
 
@@ -106,6 +106,7 @@ async function handleJoinRoom() {
     return;
   }
   clearError();
+  if (!(await ensureLogin())) return;
 
   const roomRef = db.ref('rooms/' + code);
   const snapshot = await roomRef.get();
