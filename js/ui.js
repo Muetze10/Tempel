@@ -95,15 +95,21 @@ async function showRoleRevealView() {
   hideAllViews();
   viewRoleReveal.hidden = false;
 
-  const roomRef = db.ref('rooms/' + currentRoomCode);
-  const [roleSnap, gameSnap] = await Promise.all([
-    roomRef.child('gamePlayers/' + playerId + '/role').get(),
-    roomRef.child('game').get()
-  ]);
-  const role = roleSnap.val();
-  if (!role) { showGameView(); return; }
+  // Die Rolle kommt über den gamePlayers-Listener, NICHT per get(): get() las
+  // beim Rematch den noch leeren Zwischenstand aus dem Cache, fand keine Rolle
+  // und übersprang den Reveal. Wir warten, bis die Karten DIESES Spiels da sind
+  // (dealId beginnt mit der gameNumber) - egal, welcher Listener zuerst feuert.
+  const g = latestGame || {};
+  const prefix = g.gameNumber + '-';
+  let myEntry = null;
+  for (let i = 0; i < 50 && !myEntry; i++) {
+    const e = latestGamePlayers[playerId];
+    if (e && e.role && e.dealId && e.dealId.startsWith(prefix)) myEntry = e;
+    else await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (!myEntry) { showGameView(); return; }
+  const role = myEntry.role;
   const info = ROLE_INFO[role];
-  const g = gameSnap.val() || {};
 
   // Zeigt die Rollen-Verteilung des Pools (nicht die tatsächlich ausgeteilte Anzahl)
   if (g.totalAdventurers != null) {
@@ -146,7 +152,6 @@ const myHandEl = document.getElementById('my-hand');
 const turnLabelEl = document.getElementById('turn-label');
 const seatsEl = document.getElementById('seats');
 const centerPileEl = document.getElementById('center-pile');
-const turnsLeftEl = document.getElementById('turns-left');
 const remainingCountsEl = document.getElementById('remaining-counts');
 const roundBannerEl = document.getElementById('round-banner');
 const roundBannerTextEl = document.getElementById('round-banner-text');
@@ -236,19 +241,8 @@ function addCardToCenterPile(type) {
   centerPileEl.appendChild(img);
 }
 
-// Countdown in der Mitte: wie viele Züge die Runde noch hat
+// Für den kleinen "Tick" beim Zug-Counter, wenn sich die Zahl ändert
 let lastTurnsLeft = null;
-
-function renderTurnsLeft(left) {
-  turnsLeftEl.innerHTML = `<span class="turns-num">${left}</span><span class="turns-label">${left === 1 ? 'Zug' : 'Züge'}</span>`;
-  turnsLeftEl.classList.toggle('turns-last', left === 1);
-  if (lastTurnsLeft !== null && left !== lastTurnsLeft) { // kleiner "Tick" bei Änderung
-    turnsLeftEl.classList.remove('tick');
-    void turnsLeftEl.offsetWidth; // Animation neu starten
-    turnsLeftEl.classList.add('tick');
-  }
-  lastTurnsLeft = left;
-}
 
 // Hängt ein Zug fest (Schlüsselgeber ist mitten im Zug gegangen), darf der
 // Host nach 6 s überspringen. revealSeenAt = seit wann wir "revealPending" sehen.
@@ -364,12 +358,21 @@ function renderGame() {
     const h = latestGamePlayers[uid].hand;
     left.empty += h.empty; left.gold += h.gold; left.trap += h.trap;
   });
+  // Zähler: Karten im Tempel + wie viele Züge die Runde noch hat
+  const turnsLeft = Math.max(0, n - (game.openedThisRound || 0));
+  const tick = lastTurnsLeft !== null && turnsLeft !== lastTurnsLeft;
+  lastTurnsLeft = turnsLeft;
   remainingCountsEl.innerHTML = `
-    <div class="remaining-item"><img src="${IMG.gold}" alt=""><span>${left.gold}×</span></div>
-    <div class="remaining-item"><img src="${IMG.falle}" alt=""><span>${left.trap}×</span></div>
-    <div class="remaining-item"><img src="${IMG.leer}" alt=""><span>${left.empty}×</span></div>`;
+    <div class="remaining-row">
+      <div class="remaining-item"><img src="${IMG.gold}" alt=""><span>${left.gold}×</span></div>
+      <div class="remaining-item"><img src="${IMG.falle}" alt=""><span>${left.trap}×</span></div>
+      <div class="remaining-item"><img src="${IMG.leer}" alt=""><span>${left.empty}×</span></div>
+    </div>
+    <div class="remaining-turns${turnsLeft === 1 ? ' turns-last' : ''}" title="Züge in dieser Runde">
+      <span class="turns-num${tick ? ' tick' : ''}">${turnsLeft}</span>
+      <span class="turns-label">${turnsLeft === 1 ? 'Zug' : 'Züge'}</span>
+    </div>`;
 
-  renderTurnsLeft(Math.max(0, n - (game.openedThisRound || 0)));
   renderCenterPile(game.revealLog);
 }
 
