@@ -358,17 +358,15 @@ function renderGame() {
     const h = latestGamePlayers[uid].hand;
     left.empty += h.empty; left.gold += h.gold; left.trap += h.trap;
   });
-  // Zähler: Karten im Tempel + wie viele Züge die Runde noch hat
+  // Eine Zeile: Karten im Tempel + Züge, die die Runde noch hat
   const turnsLeft = Math.max(0, n - (game.openedThisRound || 0));
   const tick = lastTurnsLeft !== null && turnsLeft !== lastTurnsLeft;
   lastTurnsLeft = turnsLeft;
   remainingCountsEl.innerHTML = `
-    <div class="remaining-row">
-      <div class="remaining-item"><img src="${IMG.gold}" alt=""><span>${left.gold}×</span></div>
-      <div class="remaining-item"><img src="${IMG.falle}" alt=""><span>${left.trap}×</span></div>
-      <div class="remaining-item"><img src="${IMG.leer}" alt=""><span>${left.empty}×</span></div>
-    </div>
-    <div class="remaining-turns${turnsLeft === 1 ? ' turns-last' : ''}" title="Züge in dieser Runde">
+    <div class="remaining-item"><img src="${IMG.gold}" alt=""><span>${left.gold}×</span></div>
+    <div class="remaining-item"><img src="${IMG.falle}" alt=""><span>${left.trap}×</span></div>
+    <div class="remaining-item"><img src="${IMG.leer}" alt=""><span>${left.empty}×</span></div>
+    <div class="remaining-item remaining-turns${turnsLeft === 1 ? ' turns-last' : ''}" title="Züge in dieser Runde">
       <span class="turns-num${tick ? ' tick' : ''}">${turnsLeft}</span>
       <span class="turns-label">${turnsLeft === 1 ? 'Zug' : 'Züge'}</span>
     </div>`;
