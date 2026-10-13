@@ -1,69 +1,72 @@
 // ============================================================
-// stats.js – Sieg-/Rollen-Statistiken, komplett unabhaengig vom
-// Raum-Code gespeichert unter /playerStats/{nameKey} - nach NAME
-// statt Spieler-ID, damit dieselbe Person auch von einem anderen
-// Geraet oder in einem neuen Raum weiterzaehlt.
-// Braucht: db (firebase.js), escapeHtml (ui.js).
+// stats.js – Statistiken pro Raum. Gespeichert unter
+// rooms/{code}/stats/{nameKey} - nach NAME statt Spieler-ID, damit
+// dieselbe Person auch von einem anderen Gerät weiterzählt. Wer den
+// Raum später mit demselben Code betritt, sieht sie wieder.
+// Braucht: db, currentRoomCode (firebase.js), escapeHtml (ui.js).
 // ============================================================
 
 const statsListEl = document.getElementById('stats-list');
-const statsRef = db.ref('playerStats');
 
-// Macht aus einem Namen einen gueltigen Firebase-Key (keine . # $ / [ ])
-// und ignoriert Gross-/Kleinschreibung, damit "Lukas" und "lukas" dieselbe
-// Person sind.
+// Gültiger Firebase-Key aus dem Namen; "Lukas" und "lukas" sind dieselbe Person
 function statsKey(name) {
   return encodeURIComponent(name.trim().toLowerCase()).replace(/[.#$/[\]]/g, '_');
 }
 
-// Nach Spielende einmal (nur vom Host, siehe firebase.js) fortschreiben.
+// Nach Spielende zählen. Jeder Client ruft das auf, ein Lock-Wert im Raum
+// (statsCounted = gameNumber) lässt aber nur EINEN durch - kein Doppelzählen,
+// auch wenn der Host zwischendurch gewechselt hat.
 async function updateStatsAfterGame(game, gamePlayers) {
-  const stats = (await statsRef.get()).val() || {};
+  const roomRef = db.ref('rooms/' + currentRoomCode);
+  const lock = await roomRef.child('statsCounted')
+    .transaction((current) => (current === game.gameNumber ? undefined : game.gameNumber));
+  if (!lock.committed) return;
 
-  // Wer hat wie oft Gold bzw. eine Falle abbekommen?
+  // Bei wem wurde wie oft Gold bzw. eine Falle aufgedeckt?
   const trapCounts = {}, goldCounts = {};
   Object.values(game.revealLog || {}).forEach((e) => {
     if (e.type === 'trap') trapCounts[e.playerId] = (trapCounts[e.playerId] || 0) + 1;
     if (e.type === 'gold') goldCounts[e.playerId] = (goldCounts[e.playerId] || 0) + 1;
   });
 
-  const updates = {};
-  Object.keys(gamePlayers).forEach((uid) => {
+  await Promise.all(Object.keys(gamePlayers).map((uid) => {
     const p = gamePlayers[uid];
-    const key = statsKey(p.name);
-    const s = stats[key] || { name: p.name, games: 0, wins: 0, losses: 0, guardian: 0, traps: 0, gold: 0 };
-    s.name = p.name; // zuletzt benutzten Namen anzeigen
-    s.games++;
-    if (p.role === game.winner) s.wins++; else s.losses++;
-    if (p.role === 'guardian') s.guardian++;
-    s.traps += trapCounts[uid] || 0;
-    s.gold += goldCounts[uid] || 0;
-    updates[key] = s;
-  });
-
-  await statsRef.update(updates);
+    return roomRef.child('stats/' + statsKey(p.name)).transaction((s) => {
+      s = s || { games: 0, wins: 0, losses: 0, guardian: 0, traps: 0, gold: 0 };
+      s.name = p.name; // zuletzt benutzten Namen anzeigen
+      s.games++;
+      if (p.role === game.winner) s.wins++; else s.losses++;
+      if (p.role === 'guardian') s.guardian++;
+      s.traps += trapCounts[uid] || 0;
+      s.gold += goldCounts[uid] || 0;
+      return s;
+    });
+  }));
 }
 
-// Zeigt ein paar "Auszeichnungen" aus allen jemals gesammelten Statistiken -
-// global, nicht nur fuer den aktuellen Raum, deshalb ein eigener Listener,
-// der unabhaengig vom Betreten/Verlassen eines Raums laeuft.
+// Auszeichnungen im Warteraum
 function renderStats(stats) {
-  if (!statsListEl) return;
   const entries = Object.values(stats || {}).filter((s) => s.games > 0);
-  if (entries.length === 0) { statsListEl.innerHTML = ''; return; }
-
   const topOf = (key) => entries.reduce((a, b) => (b[key] > a[key] ? b : a), entries[0]);
-  const awards = [
-    ['🏆 Meiste Siege', topOf('wins'), 'wins'],
-    ['💔 Meiste Niederlagen', topOf('losses'), 'losses'],
-    ['🗡️ Öfteste Wächterin', topOf('guardian'), 'guardian'],
-    ['💀 Pechvogel (meiste Fallen)', topOf('traps'), 'traps'],
-    ['✨ Glückspilz (meistes Gold)', topOf('gold'), 'gold']
-  ].filter(([, player, key]) => player[key] > 0);
+  const awards = entries.length === 0 ? [] : [
+    ['🏆 Meiste Siege', 'wins'],
+    ['💔 Meiste Niederlagen', 'losses'],
+    ['🗡️ Öfteste Wächterin', 'guardian'],
+    ['💀 Pechvogel (meiste Fallen)', 'traps'],
+    ['✨ Glückspilz (meistes Gold)', 'gold']
+  ].map(([label, key]) => [label, topOf(key), key]).filter(([, player, key]) => player[key] > 0);
 
   statsListEl.innerHTML = awards
     .map(([label, player, key]) => `<li>${label}: <strong>${escapeHtml(player.name)}</strong> (${player[key]})</li>`)
     .join('');
 }
 
-statsRef.on('value', (snapshot) => renderStats(snapshot.val() || {}));
+// Beim Betreten/Verlassen eines Raums ein- bzw. ausschalten
+function watchStats(roomCode) {
+  db.ref('rooms/' + roomCode + '/stats').on('value', (snap) => renderStats(snap.val()));
+}
+
+function unwatchStats(roomCode) {
+  db.ref('rooms/' + roomCode + '/stats').off();
+  statsListEl.innerHTML = '';
+}

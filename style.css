@@ -473,6 +473,65 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   gap: 5px;
 }
 
+.center-pile-wrap { position: relative; }
+
+/* Zug-Countdown: kleine Stein-Plakette an der Ecke des Ablagestapels */
+.turns-left {
+  position: absolute;
+  top: calc(var(--card-w) * -0.5);
+  right: calc(var(--card-w) * -0.55);
+  z-index: 3;
+  width: calc(var(--card-w) * 1.15);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 35% 30%, var(--stone-700), var(--stone-900));
+  box-shadow: 0 3px 10px rgba(0,0,0,0.75), inset 0 0 0 1px rgba(226,197,121,0.18);
+  line-height: 1;
+  pointer-events: none;
+}
+
+.turns-num {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(0.9rem, 3.4cqw, 1.7rem);
+  color: var(--gold-300);
+  text-shadow: 0 1px 6px rgba(0,0,0,0.8);
+}
+
+.turns-label {
+  font-size: clamp(0.4rem, 1.3cqw, 0.65rem);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sand-100);
+  opacity: 0.7;
+  margin-top: 2px;
+}
+
+.turns-left.turns-last .turns-num { color: var(--red-300); }
+.turns-left.tick { animation: turns-tick 0.4s ease-out; }
+
+@keyframes turns-tick {
+  0%   { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+/* Hinweis bei Verbindungsabbruch */
+.conn-banner {
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  left: 0; right: 0;
+  z-index: 60;
+  padding: 6px 12px;
+  text-align: center;
+  font-size: 0.82rem;
+  color: #fff;
+  background: rgba(193, 80, 46, 0.92);
+}
+
 .center-pile {
   position: relative;
   width: calc(var(--card-w) * 1.6);
@@ -720,5 +779,5 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 
 @media (prefers-reduced-motion: reduce) {
   .btn, .role-card-inner, .my-card-inner, .seat-card-back, .corner-role-front { transition: none; }
-  .center-card, .end-title, .end-role-item { animation: none; }
+  .center-card, .turns-left.tick, .end-title, .end-role-item { animation: none; }
 }

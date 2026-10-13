@@ -1,33 +1,18 @@
 // ============================================================
-// game.js – Spielzustand und Spielregeln: Rollen/Karten verteilen,
-// Runden-/Sieg-Logik, eine Karte aufdecken.
-//
-// Braucht: db, currentRoomCode, playerId, isHost, latestPlayers,
-// latestVotes (aus firebase.js), ROLE_TABLE/ROOM_TABLE (config.js),
-// und ruft renderGame()/announceRound() (ui.js) auf.
+// game.js – Spielregeln: Spiel starten, Zug (Schlüssel + Karte
+// aufdecken), Rundenwechsel. Nutzt Variablen aus firebase.js und
+// ruft renderGame() aus ui.js auf (alle Dateien teilen den Scope).
 // ============================================================
 
-// --- Spiel-Zustand ----------------------------------------------------
 let latestGame = null;
 let latestGamePlayers = {};
-let centerPileCount = 0;
 
-// Waehrend dies gesetzt ist, wird die zuletzt aufgedeckte Karte in der
-// Anzeige noch fuer einen kurzen Moment beim Zielspieler "zurueckgehalten" -
-// der Schluessel (game.turnPlayerId) ist zu diesem Zeitpunkt aber schon beim
-// naechsten Spieler. Siehe renderGame() in ui.js.
-let pendingReveal = null;
-
-// lastDealId: welche Austeilung (gameNumber-Runde) WIR schon animiert haben.
-// Die ID steht bei jedem Spieler direkt in seinen eigenen Daten (dealId) und
-// kommt damit ATOMAR mit den neuen Karten an - unabhaengig davon, welcher
-// Firebase-Listener (game / gamePlayers) zuerst feuert (siehe ui.js).
-// lastRenderedHandKey: verhindert unnötiges Neu-Bauen der Kartenanzeige, wenn
-// sich an der eigenen Hand gar nichts geändert hat.
+// Hand-Animation: Jede Austeilung hat eine dealId (steht bei den Karten des
+// Spielers). Neue ID = neu ausgeteilt -> Karten erst verdeckt, dann aufdecken.
 let lastDealId = null;
 let lastRenderedHandKey = null;
 
-// Sperrt gegen Doppelklick/Doppel-Tap beim Aufdecken (siehe revealCard unten)
+// Sperrt gegen Doppelklick/Doppel-Tap, solange ein Zug läuft
 let revealInProgress = false;
 
 // Fisher-Yates-Shuffle: mischt ein Array wirklich zufällig
@@ -48,10 +33,8 @@ function countTypes(cards) {
 }
 
 // --- Spiel starten: Rollen + Karten zufällig verteilen ---------------------
-// Gemeinsam genutzt vom Host-Button UND von der Mehrheits-Abstimmung.
-// Ein transaction()-Lock auf den Status verhindert, dass zwei Aufrufe
-// gleichzeitig starten (z. B. Host klickt genau in dem Moment, in dem
-// die Abstimmung die Mehrheit erreicht).
+// Host-Button und Mehrheits-Abstimmung nutzen dieselbe Funktion; der
+// transaction()-Lock auf den Status verhindert einen doppelten Start.
 async function startGameInternal() {
   const lock = await db.ref('rooms/' + currentRoomCode + '/status')
     .transaction((current) => (current === 'lobby' ? 'starting' : undefined));
@@ -130,15 +113,8 @@ async function handleToggleReady() {
   await db.ref('rooms/' + currentRoomCode + '/replayVotes/' + playerId).set(!amReady);
 }
 
-// Startet automatisch, sobald mehr als die Hälfte zugestimmt hat.
-//
-// WICHTIG: Nur der Host löst den Start tatsächlich aus. Vorher riefen ALLE
-// Clients gleichzeitig startGameInternal() auf, sobald die Mehrheit erreicht
-// war - die transaction() sorgte zwar dafür, dass nur EIN Schreibvorgang
-// tatsächlich passiert, aber so viele gleichzeitig konkurrierende Clients
-// waren vermutlich die Ursache dafür, dass ausgerechnet der "gewinnende"
-// Client (zufällig, je nach Netzwerk-Timing) seinen eigenen Rollen-Reveal
-// manchmal verpasste. Mit nur einem Initiator ist der Ablauf eindeutig.
+// Startet automatisch, sobald mehr als die Hälfte zugestimmt hat - nur der
+// Host löst aus, damit nicht alle Clients gleichzeitig starten wollen.
 let autoStartAttempted = false;
 
 function checkAutoStart() {
@@ -147,18 +123,17 @@ function checkAutoStart() {
   const majorityReached = n >= 3 && ready > n / 2;
 
   if (!majorityReached) {
-    autoStartAttempted = false; // Schwelle wieder unterschritten - nächstes Mal darf wieder gestartet werden
+    autoStartAttempted = false; // Schwelle unterschritten - nächstes Mal darf wieder gestartet werden
     return;
   }
-  if (autoStartAttempted || !isHost) return; // nicht doppelt und nur der Host startet
+  if (autoStartAttempted || !isHost) return;
 
   autoStartAttempted = true;
   startGameInternal();
 }
 
-// --- Zug weiterreichen, wenn der aktuelle Schluesselinhaber weg ist ------
-// Nur der Host sieht/nutzt den Button (siehe ui.js). Der Schluessel geht an
-// einen zufaelligen anwesenden Spieler mit noch verbleibenden Karten.
+// --- Zug weiterreichen (nur Host-Button, siehe ui.js) -----------------------
+// Der Schlüssel geht an einen zufälligen anwesenden Spieler mit Karten.
 async function skipAbsentTurn() {
   if (!latestGame) return;
   const candidates = Object.keys(latestGamePlayers).filter((uid) => {
@@ -171,17 +146,11 @@ async function skipAbsentTurn() {
   await db.ref('rooms/' + currentRoomCode).update({ 'game/turnPlayerId': nextUid, 'game/revealPending': null });
 }
 
-// --- Eine Karte bei einem Mitspieler aufdecken ---------------------------
-// revealInProgress sperrt gegen Doppelklick/Doppel-Tap: ohne diese Sperre
-// konnten zwei schnelle Klicks (v. a. auf Touchscreens) beide parallel
-// starten, bevor der erste fertig geschrieben hatte - Ergebnis: zwei
-// aufgedeckte Karten statt einer. Die Sperre bleibt auch während der kurzen
-// Pause vor Runden-/Spielende aktiv, damit dort kein zweiter Klick mehr
-// durchkommt, bevor die Runde wirklich gewechselt hat.
+// --- Ein Zug: erst wandert der Schlüssel, dann wird die Karte aufgedeckt ---
 async function revealCard(targetUid) {
   if (revealInProgress) return;
   revealInProgress = true;
-  if (latestGame) renderGame(); // Karten sofort optisch als "gesperrt" markieren
+  if (latestGame) renderGame(); // Karten sofort als "gesperrt" zeigen
 
   try {
     const roomRef = db.ref('rooms/' + currentRoomCode);
@@ -192,22 +161,17 @@ async function revealCard(targetUid) {
     const game = gameSnap.val();
     const gamePlayers = playersSnap.val();
     if (!game || !gamePlayers) return;
-
-    if (game.turnPlayerId !== playerId || game.revealPending) return; // nur der Schlüssel-Spieler darf aufdecken
+    if (game.turnPlayerId !== playerId || game.revealPending) return; // nur der Schlüsselinhaber
 
     const targetHand = gamePlayers[targetUid].hand;
     const total = targetHand.empty + targetHand.gold + targetHand.trap;
     if (total === 0) return;
 
-    // --- Schritt 1: ERST den Schlüssel weitergeben (bei allen sichtbar). ---
-    // revealPending sperrt in der Zwischenzeit jedes Antippen, damit der neue
-    // Schlüsselinhaber nicht schon selbst aufdeckt, bevor die Karte dran ist.
+    // Schritt 1: Schlüssel wandert zum Ziel; revealPending sperrt alle Klicks.
     await roomRef.update({ 'game/turnPlayerId': targetUid, 'game/revealPending': true });
     await new Promise((resolve) => setTimeout(resolve, 900));
 
-    // --- Schritt 2: DANN die Karte aufdecken (Logik wie bisher) ---
-
-    // Zufällige Karte aus dem Vorrat des Zielspielers ziehen
+    // Schritt 2: zufällige Karte des Ziels aufdecken
     const pick = Math.random() * total;
     let type;
     if (pick < targetHand.empty) type = 'empty';
@@ -220,20 +184,19 @@ async function revealCard(targetUid) {
     const newGoldFound = game.totalGoldFound + (type === 'gold' ? 1 : 0);
     const newTrapsFound = game.totalTrapsFound + (type === 'trap' ? 1 : 0);
 
-    // --- Der Reveal selbst - bei allen Spielern direkt sichtbar (die Karte
-    // landet im Ablegestapel). null entfernt die Sperre wieder. ---
+    // Log-Schlüssel = laufende Nummer (NICHT die Uhrzeit: jedes Gerät hat eine
+    // andere Uhr, dadurch kam die Reihenfolge im Ablagestapel durcheinander).
+    const logKey = 'r' + String(Object.keys(game.revealLog || {}).length).padStart(3, '0');
     const revealUpdates = { 'game/revealPending': null };
     revealUpdates['gamePlayers/' + targetUid + '/hand'] = targetHand;
-    revealUpdates['game/revealLog/' + Date.now()] = { round: game.round, playerId: targetUid, type: type };
+    revealUpdates['game/revealLog/' + logKey] = { round: game.round, playerId: targetUid, type: type };
     revealUpdates['game/openedThisRound'] = newOpenedThisRound;
     revealUpdates['game/totalGoldFound'] = newGoldFound;
     revealUpdates['game/totalTrapsFound'] = newTrapsFound;
 
-    // --- Was als Nächstes passiert, wird JETZT schon berechnet (auf Basis
-    // des einen konsistenten Standes von oben), aber noch nicht geschrieben. ---
-    // WICHTIG: Gold-Sieg wird VOR "Runde 4 zuende" geprüft. Ist die letzte
-    // Karte der letzten Runde zufällig auch die letzte Goldkarte, gewinnen
-    // dadurch korrekt die Abenteurer statt der Wächterinnen "weil die Zeit um ist".
+    // Folgeaktion (Spielende / neue Runde) wird jetzt berechnet, aber erst nach
+    // einer kurzen Pause geschrieben. Gold-Sieg wird VOR "Runde 4 vorbei"
+    // geprüft: die letzte Karte der letzten Runde kann noch das letzte Gold sein.
     let followUpUpdates = null;
 
     if (newGoldFound === game.totalGoldInGame) {
@@ -245,14 +208,13 @@ async function revealCard(targetUid) {
       if (game.round === 4) {
         followUpUpdates = { status: 'ended', 'game/winner': 'guardian' };
       } else {
-        // Restliche Karten einsammeln, mischen, neu austeilen - nur an
-        // Spieler, die noch im Raum sind (latestPlayers). Wer gegangen ist,
-        // scheidet ab jetzt aus; seine Karten bleiben aber im Umlauf, sonst
-        // wuerden Gold/Fallen aus dem Spiel verschwinden.
+        // Neue Runde: Restkarten einsammeln, mischen, neu austeilen - nur an
+        // Spieler, die noch im Raum sind. Wer gegangen ist, scheidet aus; seine
+        // Karten bleiben im Umlauf (sonst verschwänden Gold/Fallen).
         const presentUids = Object.keys(gamePlayers).filter((uid) => latestPlayers[uid]);
 
         if (presentUids.length < 2) {
-          // Fast alle weg - Spiel kann nicht sinnvoll weitergehen.
+          // Fast alle weg - Spiel kann nicht weitergehen.
           followUpUpdates = { status: 'ended', 'game/winner': 'guardian' };
         } else {
           const nextRoundCards = game.cardsPerPlayerThisRound - 1;
@@ -269,7 +231,7 @@ async function revealCard(targetUid) {
           followUpUpdates = {};
           let dealt = 0;
           presentUids.forEach((uid, i) => {
-            const count = nextRoundCards + (i < extraCards ? 1 : 0);
+            const count = nextRoundCards + Math.floor(extraCards / presentUids.length) + (i < extraCards % presentUids.length ? 1 : 0);
             followUpUpdates['gamePlayers/' + uid + '/hand'] = countTypes(shuffled.slice(dealt, dealt + count));
             followUpUpdates['gamePlayers/' + uid + '/dealId'] = game.gameNumber + '-' + (game.round + 1);
             dealt += count;
@@ -286,18 +248,16 @@ async function revealCard(targetUid) {
         }
       }
     }
-    // Normaler Zug: Der Schlüssel liegt durch Schritt 1 schon beim Zielspieler.
 
     await roomRef.update(revealUpdates);
 
     if (followUpUpdates) {
-      // Kurze Pause: alle sehen die zuletzt aufgedeckte Karte noch, bevor die
-      // nächste Runde angekündigt wird oder der Sieger-Screen erscheint.
+      // Pause: alle sehen die letzte Karte, bevor Runde/Endscreen kommt
       await new Promise((resolve) => setTimeout(resolve, 1800));
       await roomRef.update(followUpUpdates);
     }
   } finally {
     revealInProgress = false;
-    if (latestGame && !viewGame.hidden) renderGame(); // Karten wieder klickbar machen
+    if (latestGame && !viewGame.hidden) renderGame(); // wieder klickbar
   }
 }

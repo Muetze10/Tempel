@@ -4,7 +4,7 @@
 // Tabellen aus der Spielanleitung (Schmidt Spiele).
 // ============================================================
 
-// Bilder – exakt die Dateinamen aus deinem images/-Ordner
+// Bilder – exakt die Dateinamen aus dem images/-Ordner
 const IMG = {
   leer:       'images/Tempel_leer.jpg',
   gold:       'images/Tempel_Goldjpg.jpg',
@@ -12,8 +12,7 @@ const IMG = {
   key:        'images/Tempel_Key.jpg',
   gut:        'images/Tempel_Gut.jpg',
   boese:      'images/Tempel_Boese.jpg',
-  karteBack:  'images/Karte_Hintergrund.jpg',
-  charBack:   'images/Karakter_Hintergrund.jpg'
+  karteBack:  'images/Karte_Hintergrund.jpg'
 };
 
 const CARD_IMAGES = { empty: IMG.leer, gold: IMG.gold, trap: IMG.falle };

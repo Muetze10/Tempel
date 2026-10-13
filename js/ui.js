@@ -1,11 +1,6 @@
 // ============================================================
-// ui.js – Alles Sichtbare: DOM-Referenzen, Ansichten wechseln,
-// Rendering von Warteraum, Rollen-Reveal, Spielbrett und Endscreen.
-//
-// Braucht: db, playerId, currentRoomCode, isHost, currentHostId,
-// latestPlayers, latestVotes (firebase.js), latestGame,
-// latestGamePlayers, revealInProgress, revealCard() (game.js), IMG/
-// CARD_IMAGES/CARD_LABELS/ROLE_INFO (config.js).
+// ui.js – Alles Sichtbare: Ansichten, Warteraum, Rollen-Reveal,
+// Spielbrett, Endscreen. Nutzt Variablen aus firebase.js/game.js/config.js.
 // ============================================================
 
 // --- DOM-Elemente: Lobby ---------------------------------------------------
@@ -20,6 +15,7 @@ const btnCreateRoom = document.getElementById('btn-create-room');
 const roomCodeInput = document.getElementById('room-code-input');
 const btnJoinRoom = document.getElementById('btn-join-room');
 const lobbyError = document.getElementById('lobby-error');
+const connBannerEl = document.getElementById('conn-banner');
 
 const roomCodeDisplay = document.getElementById('room-code-display');
 const playerListEl = document.getElementById('player-list');
@@ -80,7 +76,6 @@ function hideAllViews() {
   viewRoleReveal.hidden = true;
   viewGame.hidden = true;
   viewEnd.hidden = true;
-  document.body.classList.remove('body-endscreen');
 }
 
 function showRoomView() {
@@ -110,9 +105,7 @@ async function showRoleRevealView() {
   const info = ROLE_INFO[role];
   const g = gameSnap.val() || {};
 
-  // Zeigt die Rollen-VERTEILUNG aus dem Kartenpool, nicht die tatsächlich
-  // ausgeteilte Anzahl - da manchmal eine Karte unbenutzt bleibt, würde die
-  // exakte Verteilung sonst Rückschlüsse zulassen. So bleibt sie verschleiert.
+  // Zeigt die Rollen-Verteilung des Pools (nicht die tatsächlich ausgeteilte Anzahl)
   if (g.totalAdventurers != null) {
     rolePoolInfoEl.textContent =
       `Diesmal im Spiel: ${g.totalAdventurers} Abenteurer · ${g.totalGuardians} Wächterinnen`;
@@ -138,14 +131,13 @@ async function showRoleRevealView() {
 function showGameView() {
   hideAllViews();
   viewGame.hidden = false;
-  document.body.classList.remove('theme-good', 'theme-bad'); // Farb-Hinweis nicht mit ins Spiel nehmen
-  if (latestGame) renderGame(); // erster Render hier löst ggf. die Aufdeck-Animation aus
+  document.body.classList.remove('theme-good', 'theme-bad');
+  if (latestGame) renderGame(); // löst die Aufdeck-Animation der Hand aus
 }
 
 function showEndView() {
   hideAllViews();
   viewEnd.hidden = false;
-  document.body.classList.add('body-endscreen'); // eigener Vollbild-Endscreen
   renderEndView();
 }
 
@@ -154,6 +146,7 @@ const myHandEl = document.getElementById('my-hand');
 const turnLabelEl = document.getElementById('turn-label');
 const seatsEl = document.getElementById('seats');
 const centerPileEl = document.getElementById('center-pile');
+const turnsLeftEl = document.getElementById('turns-left');
 const remainingCountsEl = document.getElementById('remaining-counts');
 const roundBannerEl = document.getElementById('round-banner');
 const roundBannerTextEl = document.getElementById('round-banner-text');
@@ -161,10 +154,8 @@ const cornerRoleEl = document.getElementById('corner-role');
 const cornerRoleFrontEl = document.getElementById('corner-role-front');
 const btnSkipTurn = document.getElementById('btn-skip-turn');
 
-// Baut die eigenen Karten als kleine Flip-Karten.
-// animate=true (Rundenstart): erst verdeckt zeigen, dann reihum aufdecken.
-// animate=false (z. B. ein anderer Spieler deckt zwischendurch eine meiner
-// Karten auf): direkt aufgedeckt zeigen, ohne die Animation zu wiederholen.
+// Eigene Karten als Flip-Karten. animate=true (neue Austeilung): erst verdeckt,
+// dann nacheinander aufdecken; sonst direkt aufgedeckt.
 function renderMyHand(hand, animate) {
   myHandEl.innerHTML = '';
   const types = [];
@@ -187,21 +178,14 @@ function renderMyHand(hand, animate) {
       </div>
     `;
     myHandEl.appendChild(flip);
-
-    if (animate) {
-      // Leicht gestaffelt, zeitlich abgestimmt darauf, dass die große
-      // Rundenansage (falls vorhanden) gerade verblasst ist.
-      setTimeout(() => flip.classList.add('flipped'), 1700 + idx * 90);
-    } else {
-      flip.classList.add('flipped');
-    }
+    // gestaffelt aufdecken, nachdem die Rundenansage verblasst ist
+    if (animate) setTimeout(() => flip.classList.add('flipped'), 1700 + idx * 90);
+    else flip.classList.add('flipped');
   });
 }
 
-// Große Rundenansage, die kurz über dem Bildschirm eingeblendet wird.
-// Verwaltet nebenbei auch, bis wann der Schlüssel fuer diese Runde noch
-// versteckt bleibt (keyHiddenForRound) - alles an einer Stelle, statt über
-// zwei Dateien mit eigenem Timer verteilt (das war fehleranfällig).
+// Große Rundenansage. Solange sie läuft (keyHiddenForRound), bleibt der
+// Schlüssel der neuen Runde unsichtbar und nicht nutzbar.
 let keyHiddenForRound = null;
 
 function announceRound(roundNumber) {
@@ -214,10 +198,61 @@ function announceRound(roundNumber) {
     setTimeout(() => {
       roundBannerEl.hidden = true;
       if (keyHiddenForRound === roundNumber) keyHiddenForRound = null;
-      if (latestGame && !viewGame.hidden) renderGame(); // Schlüssel jetzt sichtbar machen
+      if (latestGame && !viewGame.hidden) renderGame();
     }, 400);
   }, 1800);
 }
+
+// --- Ablagestapel: wird nur aus dem revealLog aufgebaut ---------------------
+// shownLogKeys merkt, welche Einträge schon liegen. Ein neuer Eintrag wird
+// anhand seines Schlüssels erkannt (nicht anhand der Position) - so kann die
+// Karte nie mit einer anderen verwechselt werden.
+const shownLogKeys = new Set();
+
+function resetCenterPile() {
+  shownLogKeys.clear();
+  centerPileEl.innerHTML = '';
+}
+
+function renderCenterPile(revealLog) {
+  const keys = Object.keys(revealLog || {}).sort();
+  if (keys.length < shownLogKeys.size) resetCenterPile(); // neues Spiel
+  keys.forEach((key) => {
+    if (shownLogKeys.has(key)) return;
+    shownLogKeys.add(key);
+    addCardToCenterPile(revealLog[key].type);
+  });
+}
+
+// Legt eine aufgedeckte Karte leicht verdreht auf den Stapel
+function addCardToCenterPile(type) {
+  const img = document.createElement('img');
+  img.className = 'center-card';
+  img.src = CARD_IMAGES[type];
+  img.alt = CARD_LABELS[type];
+  img.style.setProperty('--rot', (Math.random() * 26 - 13) + 'deg');
+  img.style.setProperty('--dx', (Math.random() * 10 - 5) + 'px');
+  img.style.setProperty('--dy', (Math.random() * 10 - 5) + 'px');
+  centerPileEl.appendChild(img);
+}
+
+// Countdown in der Mitte: wie viele Züge die Runde noch hat
+let lastTurnsLeft = null;
+
+function renderTurnsLeft(left) {
+  turnsLeftEl.innerHTML = `<span class="turns-num">${left}</span><span class="turns-label">${left === 1 ? 'Zug' : 'Züge'}</span>`;
+  turnsLeftEl.classList.toggle('turns-last', left === 1);
+  if (lastTurnsLeft !== null && left !== lastTurnsLeft) { // kleiner "Tick" bei Änderung
+    turnsLeftEl.classList.remove('tick');
+    void turnsLeftEl.offsetWidth; // Animation neu starten
+    turnsLeftEl.classList.add('tick');
+  }
+  lastTurnsLeft = left;
+}
+
+// Hängt ein Zug fest (Schlüsselgeber ist mitten im Zug gegangen), darf der
+// Host nach 6 s überspringen. revealSeenAt = seit wann wir "revealPending" sehen.
+let revealSeenAt = null;
 
 function renderGame() {
   const game = latestGame;
@@ -225,9 +260,6 @@ function renderGame() {
 
   roundDisplay.textContent = game.round;
 
-  // Waehrend die grosse Rundenanzeige noch laeuft, bleibt der Schluessel
-  // unsichtbar/nicht nutzbar - er "wandert" optisch erst danach zum naechsten
-  // Spieler (siehe keyHiddenForRound, verwaltet in announceRound oben).
   const keyHidden = keyHiddenForRound === game.round;
   const isMyTurn = !keyHidden && game.turnPlayerId === playerId;
   const turnPlayerName = (latestPlayers[game.turnPlayerId] || {}).name || '?';
@@ -235,69 +267,20 @@ function renderGame() {
     ? 'Neue Runde beginnt …'
     : game.revealPending
       ? turnPlayerName + ' hat den Schlüssel – Karte wird aufgedeckt …'
-    : isMyTurn
-      ? 'Du hast den Schlüssel – tippe die Karten eines Mitspielers an'
-      : turnPlayerName + ' hat den Schlüssel';
+      : isMyTurn
+        ? 'Du hast den Schlüssel – tippe die Karten eines Mitspielers an'
+        : turnPlayerName + ' hat den Schlüssel';
   turnLabelEl.classList.toggle('turn-mine', isMyTurn);
 
-  // Vorschlag fuer Aussteiger waehrend einer Runde: automatisch erkennen
-  // lassen wir es bewusst nicht (zu fehleranfaellig bei kurzen Wackel-
-  // Verbindungen) - stattdessen darf der Host den Zug manuell weiterreichen,
-  // sobald der aktuelle Schluesselinhaber nicht mehr in der Spielerliste steht.
+  // Host darf überspringen: Schlüsselinhaber ist weg ODER ein Zug hängt fest.
+  if (!game.revealPending) revealSeenAt = null;
+  else if (revealSeenAt === null) { revealSeenAt = Date.now(); setTimeout(renderGame, 6100); }
+  const stuck = revealSeenAt !== null && Date.now() - revealSeenAt > 6000;
   const turnPlayerGone = !keyHidden && !latestPlayers[game.turnPlayerId];
-  btnSkipTurn.hidden = !(isHost && turnPlayerGone);
+  btnSkipTurn.hidden = !(isHost && (turnPlayerGone || stuck));
 
-  // --- Reihenfolge "erst Schlüssel weiter, dann Karte verschwindet" -------
-  // In der Datenbank passiert das Aufdecken weiterhin in einem einzigen,
-  // sicheren Schreibvorgang (kein Risiko durch aufgeteilte Schreibzugriffe).
-  // Damit es für alle aber auch so AUSSIEHT, als würde der Schlüssel zuerst
-  // wandern und erst danach die Karte verschwinden, wird die zuletzt
-  // aufgedeckte Karte hier lokal noch für einen kurzen Moment so angezeigt,
-  // als läge sie noch beim Zielspieler (effectiveGamePlayers) - der Schlüssel
-  // (turnPlayerId, s. o.) zeigt in dieser Zeit aber schon den neuen Inhaber.
-  const logEntries = Object.values(game.revealLog || {});
-  if (logEntries.length < centerPileCount) {
-    centerPileEl.innerHTML = '';
-    centerPileCount = 0;
-    pendingReveal = null;
-  }
-  if (!pendingReveal && logEntries.length > centerPileCount) {
-    // Backlog (z. B. nach Wiedereinstieg) sofort nachholen, nur der
-    // allerneueste Eintrag bekommt die kleine Verzoegerung.
-    while (centerPileCount < logEntries.length - 1) {
-      addCardToCenterPile(logEntries[centerPileCount].type);
-      centerPileCount++;
-    }
-    const nextEntry = logEntries[centerPileCount];
-    pendingReveal = { uid: nextEntry.playerId, type: nextEntry.type };
-    setTimeout(() => {
-      addCardToCenterPile(pendingReveal.type);
-      centerPileCount++;
-      pendingReveal = null;
-      if (latestGame && !viewGame.hidden) renderGame();
-    }, 550);
-  }
-
-  // "Effektive" Spielerdaten: fuer den Moment der Verzoegerung so, als haette
-  // der Zielspieler seine Karte noch (eine mehr vom aufgedeckten Typ).
-  let effectiveGamePlayers = latestGamePlayers;
-  if (pendingReveal && latestGamePlayers[pendingReveal.uid]) {
-    const p = latestGamePlayers[pendingReveal.uid];
-    effectiveGamePlayers = {
-      ...latestGamePlayers,
-      [pendingReveal.uid]: { ...p, hand: { ...p.hand, [pendingReveal.type]: p.hand[pendingReveal.type] + 1 } }
-    };
-  }
-
-  // --- Eigene Karten: beim Rundenstart erst verdeckt, dann aufdecken -----
-  // (und danach aufgedeckt bleiben, bis die nächste Runde beginnt)
-  //
-  // Jede Austeilung hat eine ID (dealId), die bei den Karten des Spielers
-  // selbst steht und damit zeitgleich mit ihnen ankommt. Aendert sich die ID,
-  // wurde neu ausgeteilt: Karten erst verdeckt zeigen, dann aufdecken. Das
-  // haengt an keinem Listener und keiner Reihenfolge - deshalb klappt es bei
-  // JEDEM Spieler, nicht nur bei dem, der die Runde ausgeloest hat.
-  const myEntry = effectiveGamePlayers[playerId];
+  // --- Eigene Hand: bei neuer dealId erst verdeckt, dann aufdecken ---
+  const myEntry = latestGamePlayers[playerId];
   if (myEntry && myEntry.hand) {
     const myHand = myEntry.hand;
     const handKey = myHand.empty + '-' + myHand.gold + '-' + myHand.trap;
@@ -306,134 +289,88 @@ function renderGame() {
       renderMyHand(myHand, shouldAnimate);
       lastRenderedHandKey = handKey;
     }
-    if (shouldAnimate) lastDealId = myEntry.dealId; // fuer diese Austeilung erledigt
+    if (shouldAnimate) lastDealId = myEntry.dealId;
   }
 
-  // --- Eigene Charakterkarte in der Ecke (verdeckt) ---
-  const myRole = latestGamePlayers[playerId] ? latestGamePlayers[playerId].role : null;
-  if (myRole) {
-    cornerRoleFrontEl.src = ROLE_INFO[myRole].image;
+  // --- Eigene Charakterkarte in der Ecke ---
+  if (myEntry && myEntry.role) {
+    cornerRoleFrontEl.src = ROLE_INFO[myEntry.role].image;
     cornerRoleEl.classList.remove('role-good', 'role-bad');
-    cornerRoleEl.classList.add(ROLE_INFO[myRole].className);
+    cornerRoleEl.classList.add(ROLE_INFO[myEntry.role].className);
   }
 
-  // --- Spieler rund um den Tempel, Karten faecherfoermig zur Mitte gedreht ---
-  // Kartenfaecher, Name UND Schluessel werden getrennt positioniert (je ein
-  // eigener Radius), damit sich bei vielen Spielern nichts ueberlappt. Ab 6+
-  // Spielern schrumpft zusaetzlich ein Skalierungsfaktor Faecher und Schrift,
-  // damit die Sitze trotz mehr Spielern auf dem Kreis Platz haben.
-  const uids = Object.keys(effectiveGamePlayers);
+  // --- Spieler im Kreis, Fächer zur Mitte gedreht. Fächer, Name und Schlüssel
+  // liegen auf je eigenem Radius; ab 6 Spielern schrumpft alles etwas. ---
+  const uids = Object.keys(latestGamePlayers);
   const n = uids.length;
+  const seatScale = n <= 5 ? 1 : n <= 7 ? 0.85 : n <= 9 ? 0.72 : 0.6;
+  const myIndex = uids.indexOf(playerId);
   seatsEl.innerHTML = '';
 
-  const seatScale = n <= 5 ? 1 : n <= 7 ? 0.85 : n <= 9 ? 0.72 : 0.6;
-
   uids.forEach((uid, i) => {
-    // Eigener Platz immer unten, die anderen im Uhrzeigersinn darum herum
-    const myIndex = uids.indexOf(playerId);
+    // eigener Platz unten, die anderen im Uhrzeigersinn
     const slot = myIndex >= 0 ? (i - myIndex + n) % n : i;
-    const angle = (2 * Math.PI * slot) / n + Math.PI / 2; // Slot 0 = unten
+    const angle = (2 * Math.PI * slot) / n + Math.PI / 2;
+    const at = (rx, ry) => ({ left: 50 + rx * Math.cos(angle) + '%', top: 50 + ry * Math.sin(angle) + '%' });
 
-    const left = 50 + 30 * Math.cos(angle);
-    const top  = 50 + 27 * Math.sin(angle);
-    const nameLeft = 50 + 45 * Math.cos(angle);
-    const nameTop  = 50 + 41 * Math.sin(angle);
-    // Der Schluessel liegt AUF EINEM EIGENEN Radius zwischen Faecher und
-    // Name - so kollidiert er mit keinem von beiden und ist trotzdem klar
-    // dem richtigen Spieler zugeordnet.
-    const keyLeft = 50 + 38 * Math.cos(angle);
-    const keyTop  = 50 + 34 * Math.sin(angle);
-    const fanRotation = (angle * 180) / Math.PI + 90; // tangential zur Mitte
-
-    const entry = effectiveGamePlayers[uid];
+    const entry = latestGamePlayers[uid];
     const hand = entry.hand;
     const remaining = hand.empty + hand.gold + hand.trap;
-    const name = entry.name || (latestPlayers[uid] || {}).name || '?';
-    const isTurn = !keyHidden && uid === game.turnPlayerId;
     const isMe = uid === playerId;
     const canPick = isMyTurn && !isMe && remaining > 0 && !revealInProgress && !game.revealPending;
 
-    const seat = document.createElement('div');
-    seat.className = 'seat'
-      + (canPick ? ' seat-pickable' : '')
-      + (isMe ? ' seat-me' : '');
-    seat.style.left = left + '%';
-    seat.style.top = top + '%';
-
-    // Karten leicht gefaechert: jede Karte bekommt eine eigene kleine Drehung.
-    // Die Ueberlappung (--ov) waechst mit der Kartenanzahl, damit der Faecher
-    // bei vollen 5 Karten nie in den Nachbar-Sitz ragt - die Karten selbst
-    // bleiben dabei in voller Groesse (--card-w wird nicht verkleinert).
+    // Fächer: jede Karte leicht gedreht; mehr Karten = engere Überlappung
     const overlap = -(0.22 + Math.min(remaining, 8) * 0.035);
     let cardsHtml = '';
     for (let c = 0; c < remaining; c++) {
-      const spread = (c - (remaining - 1) / 2);
+      const spread = c - (remaining - 1) / 2;
       cardsHtml += `<img src="${IMG.karteBack}" class="seat-card-back" alt=""
         style="--tilt:${spread * 5}deg; --lift:${Math.abs(spread) * 2}px">`;
     }
 
+    const seat = document.createElement('div');
+    seat.className = 'seat' + (canPick ? ' seat-pickable' : '');
+    Object.assign(seat.style, at(30, 27));
     seat.innerHTML = `
-      <div class="seat-fan" style="--fan:${fanRotation}deg; --scale:${seatScale}">
+      <div class="seat-fan" style="--fan:${(angle * 180) / Math.PI + 90}deg; --scale:${seatScale}">
         <div class="seat-cards" style="--ov:${overlap}">${cardsHtml}</div>
-      </div>
-    `;
-
+      </div>`;
     if (canPick) seat.addEventListener('click', () => revealCard(uid));
     seatsEl.appendChild(seat);
 
-    // Name als eigenes Element auf groesserem Radius - bleibt immer waagerecht
-    // und kollidiert dadurch nicht mit dem Kartenfaecher der Nachbarn.
+    // Name: waagerecht, weiter außen
     const nameEl = document.createElement('span');
     nameEl.className = 'seat-name';
-    nameEl.style.left = nameLeft + '%';
-    nameEl.style.top = nameTop + '%';
+    Object.assign(nameEl.style, at(45, 41));
     nameEl.style.setProperty('--name-scale', seatScale);
-    nameEl.textContent = name + (isMe ? ' (du)' : '');
+    nameEl.textContent = (entry.name || (latestPlayers[uid] || {}).name || '?') + (isMe ? ' (du)' : '');
     seatsEl.appendChild(nameEl);
 
-    // Schluessel: groß, eigenes Element, eigener Radius - eindeutig sichtbar,
-    // wer gerade am Zug ist, statt als kleines Icon neben dem Namen unterzugehen.
-    if (isTurn) {
+    // Schlüssel: groß, zwischen Fächer und Name
+    if (!keyHidden && uid === game.turnPlayerId) {
       const keyEl = document.createElement('img');
       keyEl.src = IMG.key;
       keyEl.alt = 'Schlüssel';
       keyEl.className = 'turn-key';
-      keyEl.style.left = keyLeft + '%';
-      keyEl.style.top = keyTop + '%';
+      Object.assign(keyEl.style, at(38, 34));
       keyEl.style.setProperty('--key-scale', seatScale);
       seatsEl.appendChild(keyEl);
     }
   });
 
-  // --- Wie viele Karten welcher Art noch unentdeckt im Tempel liegen ---
+  // --- Mitte: Restkarten-Zähler, Zug-Countdown, Ablagestapel ---
   const left = { empty: 0, gold: 0, trap: 0 };
   uids.forEach((uid) => {
-    const h = effectiveGamePlayers[uid].hand;
-    left.empty += h.empty;
-    left.gold  += h.gold;
-    left.trap  += h.trap;
+    const h = latestGamePlayers[uid].hand;
+    left.empty += h.empty; left.gold += h.gold; left.trap += h.trap;
   });
-
   remainingCountsEl.innerHTML = `
     <div class="remaining-item"><img src="${IMG.gold}" alt=""><span>${left.gold}×</span></div>
     <div class="remaining-item"><img src="${IMG.falle}" alt=""><span>${left.trap}×</span></div>
-    <div class="remaining-item"><img src="${IMG.leer}" alt=""><span>${left.empty}×</span></div>
-  `;
-}
+    <div class="remaining-item"><img src="${IMG.leer}" alt=""><span>${left.empty}×</span></div>`;
 
-// Legt ein aufgedecktes Kärtchen leicht verdreht auf den Ablegestapel
-function addCardToCenterPile(type) {
-  const img = document.createElement('img');
-  img.className = 'center-card';
-  img.src = CARD_IMAGES[type];
-  img.alt = CARD_LABELS[type];
-  const rotation = Math.random() * 26 - 13;
-  const offsetX = Math.random() * 10 - 5;
-  const offsetY = Math.random() * 10 - 5;
-  img.style.setProperty('--rot', rotation + 'deg');
-  img.style.setProperty('--dx', offsetX + 'px');
-  img.style.setProperty('--dy', offsetY + 'px');
-  centerPileEl.appendChild(img);
+  renderTurnsLeft(Math.max(0, n - (game.openedThisRound || 0)));
+  renderCenterPile(game.revealLog);
 }
 
 // --- Charakterkarte in der Ecke: antippen zeigt sie kurz ------------------

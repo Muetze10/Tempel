@@ -1,25 +1,17 @@
 // ============================================================
-// firebase.js – Verbindung zu Firebase und alles rund um den
-// RAUM (nicht das eigentliche Spiel): erstellen, beitreten,
-// verlassen, Live-Listener, Host-Übergabe.
-//
-// Braucht: firebaseConfig (aus firebase-config.js), und ruft an
-// mehreren Stellen in ui.js/game.js definierte Funktionen auf
-// (renderPlayerList, showRoleRevealView, checkAutoStart, ...).
-// Das funktioniert, weil alle Dateien denselben globalen Scope
-// teilen - wichtig ist nur, dass ui.js und game.js VOR app.js
-// geladen werden (siehe index.html).
+// firebase.js – Verbindung zu Firebase und alles rund um den RAUM:
+// erstellen, beitreten, verlassen, Live-Listener, Host-Übergabe.
+// Ruft Funktionen aus ui.js/game.js/stats.js auf (gemeinsamer Scope).
 // ============================================================
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-// --- Eigene Spieler-ID -------------------------------------------------
 // Anonymer Login: Firebase vergibt pro Browser eine feste uid (bleibt nach
 // Reload erhalten). Die Sicherheitsregeln prüfen genau diese uid.
 let playerId = null;
 const authReady = firebase.auth().signInAnonymously()
-.then((cred) => { playerId = cred.user.uid; });
+  .then((cred) => { playerId = cred.user.uid; });
 
 // Wartet auf den Login; zeigt einen Fehler, falls er scheitert
 async function ensureLogin() {
@@ -27,24 +19,24 @@ async function ensureLogin() {
   catch (e) { showError('Anmeldung fehlgeschlagen. Seite neu laden?'); return false; }
 }
 
-// Erzeugt einen 4-stelligen Raum-Code aus Großbuchstaben/Zahlen (z. B. "K7QM")
+// 4-stelliger Raum-Code ohne verwechselbare Zeichen (I, O, 0, 1)
 function generateRoomCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // ohne verwechselbare Zeichen (I, O, 0, 1)
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
-  for (let i = 0; i < 4; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
+  for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
   return code;
 }
 
-// Ein Rundenwechsel schreibt game/ UND gamePlayers/ in einem update() -
-// das sind zwei getrennte Firebase-Listener, die dadurch in nicht
-// garantierter Reihenfolge feuern. Rendert man sofort bei JEDEM der beiden,
-// kann der zuerst ankommende Listener mit noch inkonsistentem Zwischenstand
-// rendern (z. B. schon die neue, kuerzere Hand, aber noch die alte Runde) -
-// das hat bisher die Aufdeck-Animation kaputt gemacht (Karten kurz
-// aufgedeckt, dann nochmal). Ueber einen Mikrotask warten wir, bis beide
-// Updates angekommen sind, und rendern erst dann einmal.
+// --- Raum-/Lobby-Zustand ---------------------------------------------------
+let currentRoomCode = null;
+let isHost = false;
+let currentHostId = null;
+let myName = '';
+let latestVotes = {};
+let latestPlayers = {};
+
+// Mehrere Firebase-Updates (game + gamePlayers) kommen fast gleichzeitig an;
+// über einen Mikrotask wird daraus nur ein Render mit konsistentem Stand.
 let renderGameScheduled = false;
 function scheduleRenderGame() {
   if (renderGameScheduled) return;
@@ -55,39 +47,78 @@ function scheduleRenderGame() {
   });
 }
 
-// --- Raum-/Lobby-Zustand ---------------------------------------------------
-let currentRoomCode = null;
-let isHost = false;
-let currentHostId = null;
-let latestVotes = {};
-let latestPlayers = {};
+// --- Verbindungsstatus ------------------------------------------------------
+// Bricht die Verbindung ab, zeigt der Warteraum veraltete Daten. Deshalb ein
+// Hinweis-Banner; beim Wiederverbinden melden wir uns sofort neu im Raum an.
+let wasConnected = false;
+let serverOffset = 0; // Differenz zwischen Server- und Geräte-Uhr
+db.ref('.info/serverTimeOffset').on('value', (s) => { serverOffset = s.val() || 0; });
+
+function watchConnection() { // wird in app.js gestartet (braucht das Banner aus ui.js)
+  db.ref('.info/connected').on('value', (snap) => {
+    const connected = snap.val() === true;
+    if (connected) wasConnected = true;
+    connBannerEl.hidden = connected || !wasConnected;
+    if (connected && currentRoomCode) presencePing();
+  });
+}
+
+// --- Anwesenheit (Herzschlag) --------------------------------------------
+// onDisconnect() greift nicht immer sofort (Netzwechsel, eingefrorener Tab).
+// Deshalb meldet sich jeder Client alle 15 s; wer 45 s still war, wird von
+// irgendeinem anderen Client aus der Liste entfernt. update() legt den
+// Spieler außerdem wieder an, falls er zu Unrecht entfernt wurde.
+let heartbeatTimer = null;
+let staleCheckTimer = null;
+
+function presencePing() {
+  if (!currentRoomCode) return;
+  const ref = db.ref('rooms/' + currentRoomCode + '/players/' + playerId);
+  ref.onDisconnect().remove();
+  ref.update({ name: myName, lastSeen: firebase.database.ServerValue.TIMESTAMP });
+}
+
+function startPresence(roomCode) {
+  presencePing();
+  heartbeatTimer = setInterval(presencePing, 15000);
+  staleCheckTimer = setInterval(async () => {
+    const playersRef = db.ref('rooms/' + roomCode + '/players');
+    const players = (await playersRef.get()).val() || {};
+    const now = Date.now() + serverOffset;
+    const updates = {};
+    Object.entries(players).forEach(([uid, p]) => {
+      if (uid !== playerId && p.lastSeen && now - p.lastSeen > 45000) updates[uid] = null;
+    });
+    if (Object.keys(updates).length) playersRef.update(updates);
+  }, 20000);
+}
+
+function stopPresence() {
+  clearInterval(heartbeatTimer);
+  clearInterval(staleCheckTimer);
+}
 
 // --- Raum erstellen -----------------------------------------------------
 async function handleCreateRoom() {
   const name = nameInput.value.trim();
-  if (!name) {
-    showError('Bitte gib zuerst deinen Namen ein.');
-    return;
-  }
+  if (!name) return showError('Bitte gib zuerst deinen Namen ein.');
   clearError();
   if (!(await ensureLogin())) return;
 
-  const roomCode = generateRoomCode();
+  // Code wählen, der noch nicht vergeben ist (sonst würde ein alter Raum samt
+  // Statistik überschrieben)
+  let roomCode;
+  do { roomCode = generateRoomCode(); }
+  while ((await db.ref('rooms/' + roomCode).get()).exists());
 
-  // Raum in der Datenbank anlegen: Host-Info + erster Spieler
   await db.ref('rooms/' + roomCode).set({
     hostId: playerId,
     status: 'lobby',
     createdAt: firebase.database.ServerValue.TIMESTAMP,
-    players: {
-      [playerId]: { name: name, joinedAt: firebase.database.ServerValue.TIMESTAMP }
-    }
+    players: { [playerId]: { name: name, joinedAt: firebase.database.ServerValue.TIMESTAMP } }
   });
 
-  // Sorgt dafür, dass der Spieler automatisch aus dem Raum verschwindet,
-  // sobald der Tab geschlossen wird oder die Verbindung abbricht.
-  db.ref('rooms/' + roomCode + '/players/' + playerId).onDisconnect().remove();
-
+  myName = name;
   isHost = true;
   enterRoom(roomCode);
 }
@@ -96,228 +127,159 @@ async function handleCreateRoom() {
 async function handleJoinRoom() {
   const name = nameInput.value.trim();
   const code = roomCodeInput.value.trim().toUpperCase();
-
-  if (!name) {
-    showError('Bitte gib zuerst deinen Namen ein.');
-    return;
-  }
-  if (!code) {
-    showError('Bitte gib einen Raum-Code ein.');
-    return;
-  }
+  if (!name) return showError('Bitte gib zuerst deinen Namen ein.');
+  if (!code) return showError('Bitte gib einen Raum-Code ein.');
   clearError();
   if (!(await ensureLogin())) return;
 
   const roomRef = db.ref('rooms/' + code);
-  const snapshot = await roomRef.get();
+  const room = (await roomRef.get()).val();
+  if (!room) return showError('Diesen Raum gibt es nicht. Code prüfen?');
 
-  if (!snapshot.exists()) {
-    showError('Diesen Raum gibt es nicht. Code prüfen?');
-    return;
+  // Ist niemand mehr im Raum, aber ein altes Spiel hängt noch: zurück in die Lobby
+  const nobodyThere = !room.players || Object.keys(room.players).length === 0;
+  if (nobodyThere && room.status !== 'lobby') {
+    await roomRef.update({ status: 'lobby', gamePlayers: null, game: null, replayVotes: null });
+    room.status = 'lobby';
+    room.gamePlayers = null;
   }
 
-  const room = snapshot.val();
-  // Laeuft schon ein Spiel: nur reinlassen, wer (per gespeicherter playerId)
-  // bereits Teil DIESES laufenden Spiels war - so kann man nach Verbindungs-
-  // abbruch/Reload wieder einsteigen, aber niemand Fremdes mitten im Spiel.
+  // Läuft ein Spiel, darf nur wieder rein, wer schon dabei war (Wiedereinstieg)
   const wasInGame = room.gamePlayers && room.gamePlayers[playerId];
-  if (room.status !== 'lobby' && !wasInGame) {
-    showError('Dieses Spiel läuft schon.');
-    return;
-  }
+  if (room.status !== 'lobby' && !wasInGame) return showError('Dieses Spiel läuft schon.');
 
-  // Spieler zur Spielerliste des Raums hinzufügen (bzw. bei Wiedereinstieg
-  // aktualisieren - Name kann sich seit dem letzten Mal geaendert haben)
   await roomRef.child('players/' + playerId).set({
     name: name,
     joinedAt: firebase.database.ServerValue.TIMESTAMP
   });
 
-  db.ref('rooms/' + code + '/players/' + playerId).onDisconnect().remove();
-
+  myName = name;
   isHost = room.hostId === playerId;
   enterRoom(code);
 }
 
-// --- In den Warteraum wechseln und alles live beobachten -----------------
-// onDisconnect() greift meist zuverlaessig, aber nicht immer sofort (z. B.
-// Handy-Netzwechsel, Tab eingefroren) - dann steht ein Spieler noch in der
-// Lobby, obwohl er laengst weg ist. Deshalb zusaetzlich ein Herzschlag: jeder
-// Client meldet sich alle 15s, der Host entfernt alle, die 45s nichts mehr
-// von sich hoeren liessen.
-let heartbeatTimer = null;
-let staleCheckTimer = null;
-
-function startPresenceCheck(roomCode) {
-  const lastSeenRef = db.ref('rooms/' + roomCode + '/players/' + playerId + '/lastSeen');
-  const ping = () => lastSeenRef.set(firebase.database.ServerValue.TIMESTAMP);
-  ping();
-  heartbeatTimer = setInterval(ping, 15000);
-
-  staleCheckTimer = setInterval(async () => {
-    const snap = await db.ref('rooms/' + roomCode + '/players').get();
-    const players = snap.val() || {};
-    const now = Date.now();
-    const updates = {};
-    Object.entries(players).forEach(([uid, p]) => {
-      if (p.lastSeen && now - p.lastSeen > 45000) updates[uid] = null;
-    });
-    if (Object.keys(updates).length) db.ref('rooms/' + roomCode + '/players').update(updates);
-  }, 20000);
-}
-
-function stopPresenceCheck() {
-  clearInterval(heartbeatTimer);
-  clearInterval(staleCheckTimer);
-}
-
+// --- In den Warteraum wechseln und alles live beobachten ------------------
 function enterRoom(roomCode) {
   currentRoomCode = roomCode;
-  startPresenceCheck(roomCode);
+  startPresence(roomCode);
+  watchStats(roomCode);
 
   viewLobby.hidden = true;
   viewRoom.hidden = false;
   roomCodeDisplay.textContent = roomCode;
 
-  // "on('value', ...)" hält die Verbindung offen: sobald sich irgendwo
-  // in players/ etwas ändert, läuft diese Funktion für ALLE Spieler
-  // im Raum automatisch erneut – das ist die Live-Synchronisation.
-  db.ref('rooms/' + roomCode + '/players').on('value', (snapshot) => {
+  const roomRef = db.ref('rooms/' + roomCode);
+
+  // Spielerliste (Live-Synchronisation für alle im Raum)
+  roomRef.child('players').on('value', (snapshot) => {
     const players = snapshot.val() || {};
-    latestPlayers = players; // für den Rollen-/Karten-Zufall beim Start merken
+    latestPlayers = players;
     renderPlayerList(players);
     renderReadyCount();
-    maybeClaimHost(players); // springt ein, falls der bisherige Host den Raum verlassen hat
+    maybeClaimHost(players);
 
-    // Sind waehrend eines laufenden Spiels alle gegangen, wuerde der Raum
-    // sonst fuer immer auf status "playing" haengen bleiben und koennte nie
-    // wieder betreten werden. Die Statistiken bleiben davon unberuehrt, da
-    // sie in einem eigenen "stats"-Pfad liegen.
+    // Sind während eines Spiels alle gegangen, Raum zurück in die Lobby
     if (Object.keys(players).length === 0) {
-      db.ref('rooms/' + roomCode + '/status').get().then((s) => {
+      roomRef.child('status').get().then((s) => {
         if (s.val() && s.val() !== 'lobby') {
-          db.ref('rooms/' + roomCode).update({ status: 'lobby', gamePlayers: null, game: null, replayVotes: null });
+          roomRef.update({ status: 'lobby', gamePlayers: null, game: null, replayVotes: null });
         }
       });
     }
   });
 
-  // Wer aktuell Host ist - kann sich durch maybeClaimHost() aendern, sobald
-  // der ursprüngliche Host den Raum verlässt.
-  db.ref('rooms/' + roomCode + '/hostId').on('value', (snapshot) => {
+  roomRef.child('hostId').on('value', (snapshot) => {
     currentHostId = snapshot.val();
     isHost = currentHostId === playerId;
     btnStartGame.hidden = !isHost;
-    renderPlayerList(latestPlayers); // Host-Markierung in der Liste aktualisieren
+    renderPlayerList(latestPlayers);
   });
 
-  // Abstimmung "Ich will (nochmal) spielen": startet automatisch, sobald
-  // mehr als die Hälfte der Spieler zugestimmt hat.
-  db.ref('rooms/' + roomCode + '/replayVotes').on('value', (snapshot) => {
+  // Abstimmung "Ich will (nochmal) spielen"
+  roomRef.child('replayVotes').on('value', (snapshot) => {
     latestVotes = snapshot.val() || {};
     renderReadyCount();
     checkAutoStart();
   });
 
-  // ============================================================
-  // ZENTRALER game-Listener: einzige Quelle der Wahrheit dafür, ob ein
-  // frisches Spiel begonnen hat (gameNumber), eine neue Runde da ist
-  // (round) oder das Spiel vorbei ist (winner). Läuft über den normalen
-  // on('value')-Listener (kein manuelles .get()) - liefert dadurch immer
-  // einen konsistenten, vollständigen Snapshot statt eines Zwischenstands.
-  // ZUSÄTZLICH: der automatische Start per Abstimmung (checkAutoStart)
-  // wird nur vom Host ausgelöst, nicht von allen Clients gleichzeitig -
-  // das beseitigt den Mehrfach-Wettlauf um die Start-transaction(), der
-  // vermutlich die eigentliche Ursache dafür war, dass unregelmäßig eine
-  // einzelne Person ihren Rollen-Reveal verpasste.
+  // Zentraler game-Listener: erkennt neues Spiel (gameNumber), neue Runde
+  // (round) und Spielende (winner).
   let lastRevealedGameNumber = 0;
   let lastHandledWinner = null;
 
-  db.ref('rooms/' + roomCode + '/game').on('value', (snapshot) => {
+  roomRef.child('game').on('value', (snapshot) => {
     const newGame = snapshot.val();
     const oldGame = latestGame;
     const isFreshGame = newGame && newGame.gameNumber && newGame.gameNumber !== lastRevealedGameNumber;
 
     if (oldGame && newGame && !isFreshGame && newGame.round !== oldGame.round) {
-      // announceRound (ui.js) kuemmert sich selbst darum, bis wann der
-      // Schluessel fuer diese Runde versteckt bleibt - siehe dort.
       announceRound(newGame.round);
     }
-
     latestGame = newGame;
 
     if (isFreshGame) {
       lastRevealedGameNumber = newGame.gameNumber;
       lastHandledWinner = null;
-      showRoleRevealView(); // JEDER Spieler sieht das bei JEDEM Spiel, ohne Ausnahme
+      resetCenterPile();
+      if (newGame.winner) { // Wiedereinstieg in ein schon beendetes Spiel
+        lastHandledWinner = newGame.winner;
+        showEndView();
+      } else {
+        showRoleRevealView(); // jeder Spieler sieht seine Rolle bei jedem Spiel
+      }
       return;
     }
 
     if (newGame && newGame.winner && newGame.winner !== lastHandledWinner) {
       lastHandledWinner = newGame.winner;
-      // Nur der Host schreibt die Statistiken, damit sie nicht doppelt/mehrfach
-      // (einmal pro verbundenem Client) hochgezaehlt werden.
-      if (isHost) updateStatsAfterGame(newGame, latestGamePlayers);
+      updateStatsAfterGame(newGame, latestGamePlayers);
       showEndView();
       return;
     }
 
-    // Normales Update während des laufenden Spiels (Kartenaufdeckung, Zug
-    // wandert weiter, ...). Nur rendern, wenn das Spielbrett auch wirklich
-    // die aktive Ansicht ist - sonst würde ein zu früh eintreffendes Update
-    // (z. B. während noch der Rollen-Reveal läuft) die "Karten sind neu
-    // ausgeteilt"-Markierung verbrauchen, BEVOR die Aufdeck-Animation
-    // überhaupt gezeigt wurde.
-    if (newGame && !viewGame.hidden) {
-      scheduleRenderGame();
-    }
+    // Nur rendern, wenn das Spielbrett sichtbar ist (nicht während des Rollen-Reveals)
+    if (newGame && !viewGame.hidden) scheduleRenderGame();
   });
 
-  db.ref('rooms/' + roomCode + '/gamePlayers').on('value', (snapshot) => {
+  roomRef.child('gamePlayers').on('value', (snapshot) => {
     latestGamePlayers = snapshot.val() || {};
     if (latestGame && !viewGame.hidden) scheduleRenderGame();
   });
 
-  // Der Status wird nur noch für die Rückkehr in den Warteraum gebraucht -
-  // alles Spielrelevante läuft über den game-Listener oben.
-  db.ref('rooms/' + roomCode + '/status').on('value', (snapshot) => {
+  // Status: nur für die Rückkehr in den Warteraum
+  roomRef.child('status').on('value', (snapshot) => {
     if (snapshot.val() === 'lobby') showRoomView();
   });
 }
 
-// Springt ein, wenn der aktuelle Host nicht mehr in der Spielerliste steht
-// (z. B. weil er den Raum verlassen hat): der Spieler mit der "kleinsten" ID
-// übernimmt automatisch. transaction() macht das sicher, auch wenn mehrere
-// Clients gleichzeitig reagieren - Firebase löst das Wettrennen sauber auf.
+// Übernimmt den Host-Posten, wenn der bisherige nicht mehr in der Liste steht.
+// transaction() löst das Wettrennen mehrerer Clients sauber auf.
 function maybeClaimHost(players) {
   const ids = Object.keys(players);
   if (ids.length === 0) return;
   db.ref('rooms/' + currentRoomCode + '/hostId').transaction((current) => {
-    if (current && players[current]) return current; // Host ist noch da, nichts ändern
-    return ids.sort()[0]; // deterministisch: alle Clients kommen auf denselben neuen Host
+    if (current && players[current]) return current;
+    return ids.sort()[0]; // deterministisch: alle wählen denselben neuen Host
   });
 }
 
-// --- Raum verlassen (von überall: Warteraum ODER Endscreen) -----------------
+// --- Raum verlassen (Warteraum oder Endscreen) ------------------------------
 async function leaveRoom() {
-  stopPresenceCheck();
-  const roomRef = db.ref('rooms/' + currentRoomCode);
+  const code = currentRoomCode;
+  const roomRef = db.ref('rooms/' + code);
+  stopPresence();
+  currentRoomCode = null; // verhindert, dass ein spätes Ping uns wieder anlegt
   roomRef.child('players/' + playerId).onDisconnect().cancel();
   await Promise.all([
     roomRef.child('players/' + playerId).remove(),
     roomRef.child('replayVotes/' + playerId).remove()
   ]);
 
-  // Alle Live-Verbindungen zu diesem Raum sauber trennen
-  roomRef.child('players').off();
-  roomRef.child('hostId').off();
-  roomRef.child('replayVotes').off();
-  roomRef.child('status').off();
-  db.ref('rooms/' + currentRoomCode + '/game').off();
-  db.ref('rooms/' + currentRoomCode + '/gamePlayers').off();
+  ['players', 'hostId', 'replayVotes', 'status', 'game', 'gamePlayers'].forEach((child) => roomRef.child(child).off());
+  unwatchStats(code);
 
-  currentRoomCode = null;
   isHost = false;
+  latestGame = null;
   document.body.classList.remove('theme-good', 'theme-bad');
   hideAllViews();
   viewLobby.hidden = false;
