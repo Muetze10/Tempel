@@ -40,7 +40,18 @@ async function startGameInternal() {
     .transaction((current) => (current === 'lobby' ? 'starting' : undefined));
   if (!lock.committed) return; // ein anderer Client startet bereits
 
+  // FIX: scheitert das Austeilen (Netzwerk, Berechtigung), bliebe der Status
+  // sonst für immer auf "starting" - niemand könnte starten oder beitreten.
   const roomRef = db.ref('rooms/' + currentRoomCode);
+  try {
+    await dealNewGame(roomRef);
+  } catch (err) {
+    console.error('Spielstart fehlgeschlagen:', err);
+    await roomRef.update({ status: 'lobby' }).catch(() => {});
+  }
+}
+
+async function dealNewGame(roomRef) {
   const [playersSnap, gamesPlayedSnap] = await Promise.all([
     roomRef.child('players').get(),
     roomRef.child('gamesPlayed').get()
@@ -117,9 +128,15 @@ async function handleToggleReady() {
 // Host löst aus, damit nicht alle Clients gleichzeitig starten wollen.
 let autoStartAttempted = false;
 
+// FIX: Stimmen von Spielern, die den Raum verlassen haben, zählen nicht mehr
+// (ihre Stimme bleibt sonst in der DB und konnte den Start auslösen).
+function countReadyVotes() {
+  return Object.keys(latestVotes).filter((uid) => latestVotes[uid] && latestPlayers[uid]).length;
+}
+
 function checkAutoStart() {
   const n = Object.keys(latestPlayers).length;
-  const ready = Object.values(latestVotes).filter(Boolean).length;
+  const ready = countReadyVotes();
   const majorityReached = n >= 3 && ready > n / 2;
 
   if (!majorityReached) {
@@ -170,6 +187,11 @@ async function revealCard(targetUid) {
     // Schritt 1: Schlüssel wandert zum Ziel; revealPending sperrt alle Klicks.
     await roomRef.update({ 'game/turnPlayerId': targetUid, 'game/revealPending': true });
     await new Promise((resolve) => setTimeout(resolve, 900));
+
+    // FIX: Hat der Host den Zug in der Pause übersprungen, nicht mehr aufdecken
+    // (sonst gäbe es einen Doppelzug).
+    const current = (await roomRef.child('game').get()).val();
+    if (!current || !current.revealPending || current.turnPlayerId !== targetUid || current.round !== game.round) return;
 
     // Schritt 2: zufällige Karte des Ziels aufdecken
     const pick = Math.random() * total;
@@ -249,15 +271,32 @@ async function revealCard(targetUid) {
       }
     }
 
+    // FIX: Die Folgeaktion liegt als JSON in der DB. Stirbt dieser Client in der
+    // Pause, kann der Host sie ausführen (siehe ui.js) - vorher hing das Spiel.
+    if (followUpUpdates) revealUpdates['game/followUp'] = JSON.stringify(followUpUpdates);
     await roomRef.update(revealUpdates);
 
     if (followUpUpdates) {
       // Pause: alle sehen die letzte Karte, bevor Runde/Endscreen kommt
       await new Promise((resolve) => setTimeout(resolve, 1800));
-      await roomRef.update(followUpUpdates);
+      await applyFollowUp();
     }
   } finally {
     revealInProgress = false;
     if (latestGame && !viewGame.hidden) renderGame(); // wieder klickbar
   }
+}
+
+// Führt die hinterlegte Folgeaktion (Rundenwechsel/Spielende) GENAU EINMAL aus.
+// Die Transaktion "beansprucht" den Eintrag; wer ihn zuerst löscht, schreibt.
+// Zweite Aufrufer (z. B. Host-Notfall + Aufdecker) brechen ab.
+async function applyFollowUp() {
+  const roomRef = db.ref('rooms/' + currentRoomCode);
+  let json = null;
+  const claim = await roomRef.child('game/followUp').transaction((cur) => {
+    json = cur;
+    return cur ? null : undefined; // nichts offen -> abbrechen
+  });
+  if (!claim.committed || !json) return;
+  await roomRef.update(JSON.parse(json));
 }

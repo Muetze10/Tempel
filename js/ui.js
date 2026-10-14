@@ -54,7 +54,7 @@ function renderPlayerList(players) {
 // Zeigt an, wie viele Spieler per Abstimmung weiterspielen wollen
 function renderReadyCount() {
   const n = Object.keys(latestPlayers).length;
-  const ready = Object.values(latestVotes).filter(Boolean).length;
+  const ready = countReadyVotes();
   readyCountEl.textContent = `${ready} von ${n} bereit`;
   const amReady = !!latestVotes[playerId];
   btnToggleReady.textContent = amReady ? 'Bereit ✓ (zurückziehen)' : 'Ich will (nochmal) spielen';
@@ -248,6 +248,9 @@ let lastTurnsLeft = null;
 // Host nach 6 s überspringen. revealSeenAt = seit wann wir "revealPending" sehen.
 let revealSeenAt = null;
 
+// Notfall-Timer des Hosts für eine liegengebliebene Folgeaktion (siehe applyFollowUp)
+let followUpTimer = null;
+
 function renderGame() {
   const game = latestGame;
   if (!game) return;
@@ -272,6 +275,12 @@ function renderGame() {
   const stuck = revealSeenAt !== null && Date.now() - revealSeenAt > 6000;
   const turnPlayerGone = !keyHidden && !latestPlayers[game.turnPlayerId];
   btnSkipTurn.hidden = !(isHost && (turnPlayerGone || stuck));
+
+  // FIX: Liegt die Folgeaktion (Rundenwechsel/Spielende) nach 4 s noch bereit,
+  // ist der Aufdecker weg -> der Host führt sie aus. Normal dauert es 1,8 s.
+  if (game.followUp && isHost && !followUpTimer) {
+    followUpTimer = setTimeout(() => { followUpTimer = null; applyFollowUp(); }, 4000);
+  }
 
   // --- Eigene Hand: bei neuer dealId erst verdeckt, dann aufdecken ---
   const myEntry = latestGamePlayers[playerId];

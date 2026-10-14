@@ -93,6 +93,10 @@ function startPresence(roomCode) {
   }, 20000);
 }
 
+// Mobil: Im Hintergrund pausiert der Browser Timer. Beim Zurückkehren sofort
+// melden, damit man nicht als "weg" gilt (und beim Rundenwechsel ausscheidet).
+document.addEventListener('visibilitychange', () => { if (!document.hidden) presencePing(); });
+
 function stopPresence() {
   clearInterval(heartbeatTimer);
   clearInterval(staleCheckTimer);
@@ -148,6 +152,10 @@ async function handleJoinRoom() {
   const wasInGame = room.gamePlayers && room.gamePlayers[playerId];
   if (room.status !== 'lobby' && !wasInGame) return showError('Dieses Spiel läuft schon.');
 
+  // Maximal 10 Spieler (mehr kann das Spiel nicht austeilen)
+  const count = room.players ? Object.keys(room.players).length : 0;
+  if (count >= 10 && !(room.players && room.players[playerId])) return showError('Der Raum ist voll (max. 10 Spieler).');
+
   await roomRef.child('players/' + playerId).set({
     name: name,
     joinedAt: firebase.database.ServerValue.TIMESTAMP
@@ -177,6 +185,7 @@ function enterRoom(roomCode) {
     renderPlayerList(players);
     renderReadyCount();
     maybeClaimHost(players);
+    scheduleRenderGame(); // FIX: ohne das erschien "Zug überspringen" nie, wenn der Schlüsselinhaber ging
 
     // Sind während eines Spiels alle gegangen, Raum zurück in die Lobby
     if (Object.keys(players).length === 0) {
@@ -193,6 +202,7 @@ function enterRoom(roomCode) {
     isHost = currentHostId === playerId;
     btnStartGame.hidden = !isHost;
     renderPlayerList(latestPlayers);
+    scheduleRenderGame(); // neuer Host bekommt Skip-Button/Notfall-Timer
   });
 
   // Abstimmung "Ich will (nochmal) spielen"
