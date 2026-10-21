@@ -13,35 +13,44 @@ function statsKey(name) {
   return encodeURIComponent(name.trim().toLowerCase()).replace(/[.#$/[\]]/g, '_');
 }
 
-// Nach Spielende zählen. Jeder Client ruft das auf, ein Lock-Wert im Raum
-// (statsCounted = gameNumber) lässt aber nur EINEN durch - kein Doppelzählen,
-// auch wenn der Host zwischendurch gewechselt hat.
-async function updateStatsAfterGame(game, gamePlayers) {
+// Statistik verbuchen - wiederaufnehmbar und idempotent.
+// Beim Spielende legt game.js das Ergebnis atomar unter statsPending/g<Nr> ab.
+// Hier wird es pro Spieler verbucht; im Spieler-Eintrag merkt sich done/g<Nr>,
+// dass dieses Spiel schon gezählt ist (ein zweiter Durchlauf ändert nichts).
+// Erst wenn ALLE Spieler verbucht sind, wird der Eintrag gelöscht. Bricht die
+// Verbindung mittendrin ab, bleibt er stehen und der nächste Durchlauf (jeder
+// Client, auch nach Reload beim Betreten des Raums) macht genau den Rest.
+async function processPendingStats() {
   const roomRef = db.ref('rooms/' + currentRoomCode);
-  const lock = await roomRef.child('statsCounted')
-    .transaction((current) => (current === game.gameNumber ? undefined : game.gameNumber));
-  if (!lock.committed) return;
+  const pending = (await roomRef.child('statsPending').get()).val();
+  if (!pending) return;
 
-  // Bei wem wurde wie oft Gold bzw. eine Falle aufgedeckt?
-  const trapCounts = {}, goldCounts = {};
-  Object.values(game.revealLog || {}).forEach((e) => {
-    if (e.type === 'trap') trapCounts[e.playerId] = (trapCounts[e.playerId] || 0) + 1;
-    if (e.type === 'gold') goldCounts[e.playerId] = (goldCounts[e.playerId] || 0) + 1;
-  });
-
-  await Promise.all(Object.keys(gamePlayers).map((uid) => {
-    const p = gamePlayers[uid];
-    return roomRef.child('stats/' + statsKey(p.name)).transaction((s) => {
-      s = s || { games: 0, wins: 0, losses: 0, guardian: 0, traps: 0, gold: 0 };
-      s.name = p.name; // zuletzt benutzten Namen anzeigen
-      s.games++;
-      if (p.role === game.winner) s.wins++; else s.losses++;
-      if (p.role === 'guardian') s.guardian++;
-      s.traps += trapCounts[uid] || 0;
-      s.gold += goldCounts[uid] || 0;
-      return s;
+  for (const [pKey, entry] of Object.entries(pending)) {
+    // Gleicher Name = gleicher Statistik-Schlüssel -> vorher zusammenfassen
+    const perKey = {};
+    Object.values(entry.players || {}).forEach((p) => {
+      const k = statsKey(p.name || '?');
+      const d = perKey[k] || (perKey[k] = { name: p.name || '?', games: 0, wins: 0, losses: 0, guardian: 0, traps: 0, gold: 0 });
+      d.games++;
+      if (p.role === entry.winner) d.wins++; else d.losses++;
+      if (p.role === 'guardian') d.guardian++;
+      d.traps += p.traps || 0;
+      d.gold += p.gold || 0;
     });
-  }));
+
+    await Promise.all(Object.entries(perKey).map(([k, d]) =>
+      roomRef.child('stats/' + k).transaction((s) => {
+        s = s || { games: 0, wins: 0, losses: 0, guardian: 0, traps: 0, gold: 0 };
+        s.done = s.done || {};
+        if (s.done[pKey]) return undefined; // dieses Spiel ist hier schon gezählt
+        s.done[pKey] = true;
+        s.name = d.name; // zuletzt benutzten Namen anzeigen
+        ['games', 'wins', 'losses', 'guardian', 'traps', 'gold'].forEach((f) => { s[f] = (s[f] || 0) + d[f]; });
+        return s;
+      })));
+
+    await roomRef.child('statsPending/' + pKey).remove(); // nur nach vollem Erfolg
+  }
 }
 
 // Auszeichnungen im Warteraum

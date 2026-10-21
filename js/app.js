@@ -5,6 +5,11 @@
 
 watchConnection();
 
+// Gemerkten Namen und letzten Raum-Code vorausfüllen (Cookies, siehe firebase.js)
+const savedProfile = loadProfileCookies();
+if (savedProfile.name) nameInput.value = savedProfile.name;
+if (savedProfile.room) roomCodeInput.value = savedProfile.room;
+
 // Lobby
 btnCreateRoom.addEventListener('click', handleCreateRoom);
 btnJoinRoom.addEventListener('click', handleJoinRoom);
@@ -28,6 +33,7 @@ btnBackToLobby.addEventListener('click', async () => {
   document.body.classList.remove('theme-good', 'theme-bad');
   // Die Listener bleiben aktiv - sie müssen das nächste Spiel erkennen.
   await db.ref('rooms/' + currentRoomCode).update({
-    status: 'lobby', gamePlayers: null, game: null, replayVotes: null
+    status: 'lobby', gamePlayers: null, game: null, replayVotes: null,
+    lastActivityAt: firebase.database.ServerValue.TIMESTAMP
   });
 });

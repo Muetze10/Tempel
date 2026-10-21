@@ -23,7 +23,10 @@ const ROLE_INFO = {
   guardian:   { label: 'Wächterin',  image: IMG.boese, className: 'role-bad' }
 };
 
-// Wächterinnen-Anzahl je nach Spielerzahl
+// Rollen-POOL je Spielerzahl. Bei 3, 4, 7, 8 und 10 Spielern liegt bewusst eine
+// Rolle mehr im Pool, als Spieler da sind: Es werden n Rollen zufällig gezogen,
+// eine bleibt unbenutzt. So kann niemand aus der angezeigten Verteilung die
+// echte ableiten. (Gewollt - nicht auf die Spielerzahl "korrigieren".)
 const ROLE_TABLE = {
   3:  { adventurer: 2, guardian: 2 },
   4:  { adventurer: 3, guardian: 2 },

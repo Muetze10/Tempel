@@ -244,10 +244,6 @@ function addCardToCenterPile(type) {
 // Für den kleinen "Tick" beim Zug-Counter, wenn sich die Zahl ändert
 let lastTurnsLeft = null;
 
-// Hängt ein Zug fest (Schlüsselgeber ist mitten im Zug gegangen), darf der
-// Host nach 6 s überspringen. revealSeenAt = seit wann wir "revealPending" sehen.
-let revealSeenAt = null;
-
 // Notfall-Timer des Hosts für eine liegengebliebene Folgeaktion (siehe applyFollowUp)
 let followUpTimer = null;
 
@@ -262,19 +258,14 @@ function renderGame() {
   const turnPlayerName = (latestPlayers[game.turnPlayerId] || {}).name || '?';
   turnLabelEl.textContent = keyHidden
     ? 'Neue Runde beginnt …'
-    : game.revealPending
-      ? turnPlayerName + ' hat den Schlüssel – Karte wird aufgedeckt …'
-      : isMyTurn
-        ? 'Du hast den Schlüssel – tippe die Karten eines Mitspielers an'
-        : turnPlayerName + ' hat den Schlüssel';
+    : isMyTurn
+      ? 'Du hast den Schlüssel – tippe die Karten eines Mitspielers an'
+      : turnPlayerName + ' hat den Schlüssel';
   turnLabelEl.classList.toggle('turn-mine', isMyTurn);
 
-  // Host darf überspringen: Schlüsselinhaber ist weg ODER ein Zug hängt fest.
-  if (!game.revealPending) revealSeenAt = null;
-  else if (revealSeenAt === null) { revealSeenAt = Date.now(); setTimeout(renderGame, 6100); }
-  const stuck = revealSeenAt !== null && Date.now() - revealSeenAt > 6000;
+  // Host darf überspringen, wenn der Schlüsselinhaber weg ist.
   const turnPlayerGone = !keyHidden && !latestPlayers[game.turnPlayerId];
-  btnSkipTurn.hidden = !(isHost && (turnPlayerGone || stuck));
+  btnSkipTurn.hidden = !(isHost && turnPlayerGone);
 
   // FIX: Liegt die Folgeaktion (Rundenwechsel/Spielende) nach 4 s noch bereit,
   // ist der Aufdecker weg -> der Host führt sie aus. Normal dauert es 1,8 s.
@@ -320,7 +311,7 @@ function renderGame() {
     const hand = entry.hand;
     const remaining = hand.empty + hand.gold + hand.trap;
     const isMe = uid === playerId;
-    const canPick = isMyTurn && !isMe && remaining > 0 && !revealInProgress && !game.revealPending;
+    const canPick = isMyTurn && !isMe && remaining > 0 && !revealInProgress;
 
     // Fächer: jede Karte leicht gedreht; mehr Karten = engere Überlappung
     const overlap = -(0.22 + Math.min(remaining, 8) * 0.035);

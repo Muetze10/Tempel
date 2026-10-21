@@ -1,0 +1,33 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "config": {
+      ".read": false,
+      ".write": false
+    },
+
+    "rooms": {
+      ".indexOn": ["lastActivityAt"],
+
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null && newData.child('protected').val() === data.child('protected').val()",
+
+        "lastActivityAt": { ".validate": "newData.isNumber()" },
+
+        "players": {
+          "$uid": {
+            "name": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 20" }
+          }
+        },
+        "gamePlayers": {
+          "$uid": {
+            "name": { ".validate": "newData.isString() && newData.val().length <= 20" }
+          }
+        }
+      }
+    }
+  }
+}
