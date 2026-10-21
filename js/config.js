@@ -7,7 +7,7 @@
 // Bilder – exakt die Dateinamen aus dem images/-Ordner
 const IMG = {
   leer:       'images/Tempel_leer.jpg',
-  gold:       'images/Tempel_Goldjpg.jpg',
+  gold:       'images/Tempel_Gold.jpg',
   falle:      'images/Tempel_Feuerfalle.jpg',
   key:        'images/Tempel_Key.jpg',
   gut:        'images/Tempel_Gut.jpg',
