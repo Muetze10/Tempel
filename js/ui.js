@@ -247,55 +247,10 @@ let lastTurnsLeft = null;
 // Notfall-Timer des Hosts für eine liegengebliebene Folgeaktion (siehe applyFollowUp)
 let followUpTimer = null;
 
-function renderGame() {
-  const game = latestGame;
-  if (!game) return;
-
-  roundDisplay.textContent = game.round;
-
-  const keyHidden = keyHiddenForRound === game.round;
-  const isMyTurn = !keyHidden && game.turnPlayerId === playerId;
-  const turnPlayerName = (latestPlayers[game.turnPlayerId] || {}).name || '?';
-  turnLabelEl.textContent = keyHidden
-    ? 'Neue Runde beginnt …'
-    : isMyTurn
-      ? 'Du hast den Schlüssel – tippe die Karten eines Mitspielers an'
-      : turnPlayerName + ' hat den Schlüssel';
-  turnLabelEl.classList.toggle('turn-mine', isMyTurn);
-
-  // Host darf überspringen, wenn der Schlüsselinhaber weg ist.
-  const turnPlayerGone = !keyHidden && !latestPlayers[game.turnPlayerId];
-  btnSkipTurn.hidden = !(isHost && turnPlayerGone);
-
-  // FIX: Liegt die Folgeaktion (Rundenwechsel/Spielende) nach 4 s noch bereit,
-  // ist der Aufdecker weg -> der Host führt sie aus. Normal dauert es 1,8 s.
-  if (game.followUp && isHost && !followUpTimer) {
-    followUpTimer = setTimeout(() => { followUpTimer = null; applyFollowUp(); }, 4000);
-  }
-
-  // --- Eigene Hand: bei neuer dealId erst verdeckt, dann aufdecken ---
-  const myEntry = latestGamePlayers[playerId];
-  if (myEntry && myEntry.hand) {
-    const myHand = myEntry.hand;
-    const handKey = myHand.empty + '-' + myHand.gold + '-' + myHand.trap;
-    const shouldAnimate = !!myEntry.dealId && myEntry.dealId !== lastDealId;
-    if (shouldAnimate || handKey !== lastRenderedHandKey) {
-      renderMyHand(myHand, shouldAnimate);
-      lastRenderedHandKey = handKey;
-    }
-    if (shouldAnimate) lastDealId = myEntry.dealId;
-  }
-
-  // --- Eigene Charakterkarte in der Ecke ---
-  if (myEntry && myEntry.role) {
-    cornerRoleFrontEl.src = ROLE_INFO[myEntry.role].image;
-    cornerRoleEl.classList.remove('role-good', 'role-bad');
-    cornerRoleEl.classList.add(ROLE_INFO[myEntry.role].className);
-  }
-
-  // --- Spieler im Kreis, Fächer zur Mitte gedreht. Fächer, Name und Schlüssel
-  // liegen auf je eigenem Radius; ab 6 Spielern schrumpft alles etwas. ---
-  const uids = Object.keys(latestGamePlayers);
+// Baut den Spielerkreis auf. Wird nur gerufen, wenn sich der Spielzustand
+// geändert hat (siehe seatsKey in renderGame) - ein Neuaufbau bei jedem
+// Firebase-Event würde die Kartenbilder samt Animation ständig neu starten.
+function renderSeats(game, uids, { keyHidden, isMyTurn, turnPlayerGone }) {
   const n = uids.length;
   const seatScale = n <= 5 ? 1 : n <= 7 ? 0.85 : n <= 9 ? 0.72 : 0.6;
   const myIndex = uids.indexOf(playerId);
@@ -351,6 +306,77 @@ function renderGame() {
       seatsEl.appendChild(keyEl);
     }
   });
+}
+
+function renderGame() {
+  const game = latestGame;
+  if (!game) return;
+
+  roundDisplay.textContent = game.round;
+
+  const keyHidden = keyHiddenForRound === game.round;
+  const isMyTurn = !keyHidden && game.turnPlayerId === playerId;
+  const turnPlayerName = (latestPlayers[game.turnPlayerId] || {}).name || '?';
+  turnLabelEl.textContent = keyHidden
+    ? 'Neue Runde beginnt …'
+    : isMyTurn
+      ? 'Du hast den Schlüssel – tippe die Karten eines Mitspielers an'
+      : turnPlayerName + ' hat den Schlüssel';
+  turnLabelEl.classList.toggle('turn-mine', isMyTurn);
+
+  // Host darf überspringen, wenn der Schlüsselinhaber weg ist.
+  const turnPlayerGone = !keyHidden && !latestPlayers[game.turnPlayerId];
+  btnSkipTurn.hidden = !(isHost && turnPlayerGone);
+
+  // FIX: Liegt die Folgeaktion (Rundenwechsel/Spielende) nach 4 s noch bereit,
+  // ist der Aufdecker weg -> der Host führt sie aus. Normal dauert es 1,8 s.
+  if (game.followUp && isHost && !followUpTimer) {
+    followUpTimer = setTimeout(() => { followUpTimer = null; applyFollowUp(); }, 4000);
+  }
+
+  // --- Eigene Hand: bei neuer dealId erst verdeckt, dann aufdecken ---
+  const myEntry = latestGamePlayers[playerId];
+  if (myEntry && myEntry.hand) {
+    const myHand = myEntry.hand;
+    const handKey = myHand.empty + '-' + myHand.gold + '-' + myHand.trap;
+    const shouldAnimate = !!myEntry.dealId && myEntry.dealId !== lastDealId;
+    if (shouldAnimate || handKey !== lastRenderedHandKey) {
+      renderMyHand(myHand, shouldAnimate);
+      lastRenderedHandKey = handKey;
+    }
+    if (shouldAnimate) lastDealId = myEntry.dealId;
+  }
+
+  // --- Eigene Charakterkarte in der Ecke ---
+  if (myEntry && myEntry.role) {
+    cornerRoleFrontEl.src = ROLE_INFO[myEntry.role].image;
+    cornerRoleEl.classList.remove('role-good', 'role-bad');
+    cornerRoleEl.classList.add(ROLE_INFO[myEntry.role].className);
+  }
+
+  // --- Spieler im Kreis, Fächer zur Mitte gedreht. Fächer, Name und Schlüssel
+  // liegen auf je eigenem Radius; ab 6 Spielern schrumpft alles etwas. ---
+  const uids = Object.keys(latestGamePlayers);
+  const n = uids.length;
+
+  // Sitze nur neu bauen, wenn sich der Spielzustand wirklich geändert hat.
+  // Zuvor wurde bei JEDEM Firebase-Event (Herzschlag aller 15 s, Host-Wechsel,
+  // Status-Update, ...) das gesamte Sitze-DOM inklusive aller Kartenbilder und
+  // Click-Handler erneuert - das war das spürbare Ruckeln beim Spielen.
+  const seatsKey = [
+    game.moveSeq, game.round, game.turnPlayerId, game.openedThisRound,
+    game.followUp ? 1 : 0, keyHidden ? 1 : 0, isMyTurn ? 1 : 0, isHost ? 1 : 0,
+    turnPlayerGone ? 1 : 0, revealInProgress ? 1 : 0,
+    n, Object.keys(latestPlayers).length,
+    uids.map((uid) => {
+      const h = latestGamePlayers[uid].hand;
+      return uid + ':' + h.empty + h.gold + h.trap;
+    }).join(',')
+  ].join('|');
+  if (seatsKey !== lastRenderedSeatsKey) {
+    lastRenderedSeatsKey = seatsKey;
+    renderSeats(game, uids, { keyHidden, isMyTurn, turnPlayerGone });
+  }
 
   // --- Mitte: Restkarten-Zähler, Zug-Countdown, Ablagestapel ---
   const left = { empty: 0, gold: 0, trap: 0 };

@@ -88,17 +88,34 @@ function scheduleRenderGame() {
 // Bricht die Verbindung ab, zeigt der Warteraum veraltete Daten. Deshalb ein
 // Hinweis-Banner; beim Wiederverbinden melden wir uns sofort neu im Raum an.
 let wasConnected = false;
+let isConnectedNow = false; // für game.js: offline wartet transaction() ewig
 let serverOffset = 0; // Differenz zwischen Server- und Geräte-Uhr
 db.ref('.info/serverTimeOffset').on('value', (s) => { serverOffset = s.val() || 0; });
 
 function watchConnection() { // wird in app.js gestartet (braucht das Banner aus ui.js)
   db.ref('.info/connected').on('value', (snap) => {
     const connected = snap.val() === true;
+    isConnectedNow = connected;
     if (connected) wasConnected = true;
     connBannerEl.hidden = connected || !wasConnected;
     if (connected && currentRoomCode) presencePing();
   });
 }
+
+// Ohne Verbindung läuft eine Transaktion ewig auf den Server zu - ein Zug würde
+// das Brett dadurch für immer sperren. `.info/connected` meldet beim Start aber
+// erst einmal `false`, bevor der Socket steht; das darf einen Zug nicht
+// blockieren. Deshalb gilt: blockiert wird nur, wenn wir schon einmal verbunden
+// waren und danach die Verbindung verloren haben. Gegen das Hängen im
+// "noch nie verbunden"-Fall wirkt zusätzlich das Zeitlimit in roomTransaction().
+function isConnected() {
+  return isConnectedNow || !wasConnected;
+}
+
+// Löst auf, sobald der Raumknoten einmal live gelesen wurde (siehe enterRoom).
+// roomTransaction() wartet darauf, damit die Transaktion nicht in einen leeren
+// Cache greift und den Zug fälschlich verwirft.
+let roomSynced = Promise.resolve(false);
 
 // --- Anwesenheit (Herzschlag) --------------------------------------------
 // onDisconnect() greift nicht immer sofort (Netzwechsel, eingefrorener Tab).
@@ -241,6 +258,14 @@ function enterRoom(roomCode) {
 
   const roomRef = db.ref('rooms/' + roomCode);
 
+  // GANZER Raumknoten als Live-Listener. Das ist nicht nur Anzeige, sondern
+  // nötig für roomTransaction(): eine Transaktion auf `rooms/<code>` liest den
+  // lokalen Cache, und ohne aktiven Listener ist der leer - die Transaktion
+  // sähe `null`, obwohl der Raum existiert, und jeder Zug schlüge fehl.
+  roomSynced = new Promise((resolve) => {
+    roomRef.on('value', () => resolve(true));
+  });
+
   // Spielerliste (Live-Synchronisation für alle im Raum)
   roomRef.child('players').on('value', (snapshot) => {
     const players = snapshot.val() || {};
@@ -353,6 +378,8 @@ async function leaveRoom() {
   ]);
 
   ['players', 'hostId', 'replayVotes', 'status', 'game', 'gamePlayers'].forEach((child) => roomRef.child(child).off());
+  roomRef.off(); // den ganzen Raumknoten-Listener aus enterRoom wieder lösen
+  roomSynced = Promise.resolve(false);
   unwatchStats(code);
 
   isHost = false;

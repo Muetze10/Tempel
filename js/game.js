@@ -12,6 +12,10 @@ let latestGamePlayers = {};
 let lastDealId = null;
 let lastRenderedHandKey = null;
 
+// Änderungsschlüssel des Spielerkreises (siehe renderGame in ui.js): ein
+// Neuaufbau nur bei echter Änderung, nicht bei jedem Firebase-Event.
+let lastRenderedSeatsKey = null;
+
 // Sperrt gegen Doppelklick/Doppel-Tap, solange ein Zug läuft
 let revealInProgress = false;
 
@@ -30,6 +34,16 @@ function countTypes(cards) {
   const counts = { empty: 0, gold: 0, trap: 0 };
   cards.forEach((c) => counts[c]++);
   return counts;
+}
+
+// Setzt `rooms/<code>/lastActivityAt` auf die Serverzeit. Bewusst NICHT in der
+// Transaktion: ein frischer Zeitstempel wäre bei jeder Wiederholung ein neuer
+// Wert, die Transaktion käme also nie zur Ruhe.
+function touchActivity() {
+  const stamp = (typeof firebase !== 'undefined' && firebase.database && firebase.database.ServerValue)
+    ? firebase.database.ServerValue.TIMESTAMP
+    : Date.now();
+  db.ref('rooms/' + currentRoomCode + '/lastActivityAt').set(stamp).catch(() => {});
 }
 
 // --- Spiel starten: Rollen + Karten zufällig verteilen ---------------------
@@ -117,6 +131,10 @@ async function dealNewGame(roomRef) {
 
   const startingPlayer = shuffledPlayerIds[Math.floor(Math.random() * n)];
 
+  // Neues Spiel: den Sitz-Cache verwerfen, damit der Spielerkreis sicher neu
+  // aufgebaut wird (auch wenn der neue Zustand zufällig gleich aussähe).
+  lastRenderedSeatsKey = null;
+
   await roomRef.update({
     status: 'playing',
     startingAt: null,
@@ -194,17 +212,74 @@ const handSize = (h) => h.empty + h.gold + h.trap;
 
 // Führt fn(room) atomar aus. fn ändert `room` und gibt true zurück (schreiben)
 // oder false (Zug ungültig -> nichts wird geschrieben). Liefert true, wenn
-// geschrieben wurde. Ist der lokale Cache noch leer (room === null), gibt
-// Firebase der Funktion gleich mit den echten Daten eine zweite Chance.
+// geschrieben wurde.
+//
+// Drei Fallstricke, die das Spiel lahmlegten:
+// 1) Bei transaction() ist NUR `undefined` das Signal "abbrechen". Ein
+//    zurückgegebenes `null` schreibt NULL und löscht damit den ganzen Raum -
+//    die Spieler tauchten danach nur noch als Herzschlag (ohne joinedAt) wieder
+//    auf und das Spiel war fort. Deshalb wird bei fehlendem Raum abgebrochen.
+// 2) Eine Transaktion auf `rooms/<code>` läuft gegen den LOKALEN Cache. Ist der
+//    (noch) leer - z. B. direkt nach dem Laden oder im Wiederverbindungs-
+//    fenster - sieht die Funktion `null`, obwohl der Raum am Server existiert,
+//    und bricht ab. Deshalb wird gewartet, bis der Live-Listener aus enterRoom
+//    den Raumknoten gelesen hat.
+// 3) Offline läuft transaction() ewig auf den Server zu. `revealCard` wartet
+//    darauf, `revealInProgress` sperrte das Brett anschließend für immer.
+//    Deshalb: erst Verbindung prüfen, dann ein hartes Zeitlimit.
+const TX_TIMEOUT_MS = 8000;
+
 async function roomTransaction(fn) {
+  if (!isConnected()) return false; // schnelle Rückmeldung statt hängendem Zug
   let valid = false;
-  const res = await db.ref('rooms/' + currentRoomCode).transaction((room) => {
+  const startedAt = Date.now();
+
+  // Ein einziger Zeitgeber für das ganze Vorhaben: gilt für das Warten auf den
+  // Raumknoten UND für die Transaktion selbst. Offline löst Firebase beides nie
+  // auf - ohne Limit hinge der Zug (und damit `revealInProgress`) für immer.
+  let timer = null;
+  const timedOut = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ committed: false }), TX_TIMEOUT_MS);
+  });
+
+  // (2) Erst warten, bis der Live-Listener aus enterRoom den Raumknoten gelesen
+  // hat - sonst sieht die Transaktion einen leeren Cache und verwirft den Zug.
+  if (typeof roomSynced !== 'undefined' && roomSynced && roomSynced.then) {
+    const synced = await Promise.race([roomSynced, timedOut]);
+    if (synced !== true) {
+      // Der Timer kann in Tests sofort feuern; dann auf das echte Ergebnis warten.
+      if (Date.now() - startedAt < TX_TIMEOUT_MS) {
+        if ((await roomSynced) !== true) { if (timer) clearTimeout(timer); return false; }
+      } else {
+        if (timer) clearTimeout(timer);
+        return false;
+      }
+    }
+  }
+
+  const roomRef = db.ref('rooms/' + currentRoomCode);
+  const tx = roomRef.transaction((room) => {
     valid = false;
-    if (room === null) return room;
+    if (!room) return undefined; // Raum weg? Nie null schreiben - das löscht ihn!
     valid = fn(room) !== false;
     return valid ? room : undefined;
   });
-  return res.committed && valid;
+  // (3) Ein gekürzter Test-Timer kann sofort feuern, bevor die (im Test sehr
+  // schnelle) Transaktion abschließt - deshalb zählt der Timer nur, wenn
+  // tatsächlich Zeit vergangen ist; sonst wird das echte Ergebnis abgewartet.
+  const settledTx = tx.then(
+    (r) => r,
+    () => ({ committed: false })
+  );
+  let res = await Promise.race([settledTx, timedOut]);
+  if ((!res || !res.committed) && Date.now() - startedAt < TX_TIMEOUT_MS) res = await settledTx;
+  if (timer) clearTimeout(timer);
+  if (!res || !res.committed) return false;
+  // lastActivityAt gehört nicht in die Transaktion: ein frischer Zeitstempel
+  // macht jede Wiederholung zu einem neuen Wert (die Transaktion käme nie zur
+  // Ruhe). Er wird separat - und mit Serverzeit - nach dem Erfolg gesetzt.
+  touchActivity();
+  return valid;
 }
 
 // Läuft gerade ein normaler Zug? (nicht beendet, keine Folgeaktion offen)
@@ -226,7 +301,6 @@ async function skipAbsentTurn() {
     if (candidates.length === 0) return false;
     g.turnPlayerId = candidates[Math.floor(Math.random() * candidates.length)];
     g.moveSeq = expectedSeq + 1; // ein Klick auf die alte Ansicht wird dadurch ungültig
-    room.lastActivityAt = nowMs();
     return true;
   });
 }
@@ -251,7 +325,14 @@ async function revealCard(targetUid) {
       revealOneCard(room, targetUid);
       return true;
     });
-    if (!revealed) return;
+    if (!revealed) {
+      // Technisch gescheitert (Timeout/Verbindung)? Nur dann melden - eine
+      // reguläre Ablehnung (jemand war schneller) soll still vorbeigehen.
+      if (latestGame && latestGame.turnPlayerId === playerId && !latestGame.followUp) {
+        alert('Der Zug konnte nicht gespeichert werden. Bitte nochmal tippen.');
+      }
+      return;
+    }
 
     // Pause (nur Optik): alle sehen die letzte Karte, bevor eine neue Runde oder
     // der Endscreen kommt. Ist eine Folgeaktion offen, führt sie dieser Client aus -
@@ -286,7 +367,6 @@ function revealOneCard(room, targetUid) {
 
   g.turnPlayerId = targetUid;
   g.moveSeq = (g.moveSeq || 0) + 1;
-  room.lastActivityAt = nowMs();
 
   // Folgeaktion nur vormerken (führt applyFollowUp nach kurzer Pause aus).
   // Gold-Sieg zuerst: die letzte Karte der letzten Runde kann noch das letzte Gold sein.
@@ -306,7 +386,6 @@ async function applyFollowUp() {
     const f = room.game.followUp;
     delete room.game.followUp;
     room.game.moveSeq = (room.game.moveSeq || 0) + 1;
-    room.lastActivityAt = nowMs();
     if (f.type === 'end') endGame(room, f.winner);
     else dealNextRound(room);
     return true;
@@ -366,4 +445,7 @@ function dealNextRound(room) {
   g.cardsPerPlayerThisRound = nextCards;
   g.openedThisRound = 0;
   g.turnPlayerId = present.includes(lastTarget) ? lastTarget : present[Math.floor(Math.random() * present.length)];
+
+  // Neue Runde: Sitz-Cache verwerfen (neue dealId, neue Karten im Fächer).
+  lastRenderedSeatsKey = null;
 }
