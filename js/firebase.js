@@ -252,6 +252,10 @@ function enterRoom(roomCode) {
   startPresence(roomCode);
   watchStats(roomCode);
 
+  // Bilder vorwärmen, die der Spielstart sofort braucht (Fächer-Rückseite,
+  // Spielplan). Da ist der Browser schon fertig, wenn das Spiel losgeht.
+  [IMG.karteBack, BOARD_IMAGE].forEach((src) => { const img = new Image(); img.decoding = 'async'; img.src = src; });
+
   viewLobby.hidden = true;
   viewRoom.hidden = false;
   roomCodeDisplay.textContent = roomCode;
@@ -358,6 +362,9 @@ function enterRoom(roomCode) {
 function maybeClaimHost(players) {
   const ids = Object.keys(players);
   if (ids.length === 0) return;
+  // Alles klar? Dann keine Transaktion anstoßen - bei jedem Spieler-Herzschlag
+  // erneut eine Transaktion auf hostId zu starten kostet nur unnötig Traffic.
+  if (currentHostId && players[currentHostId]) return;
   db.ref('rooms/' + currentRoomCode + '/hostId').transaction((current) => {
     if (current && players[current]) return current;
     return ids.sort()[0]; // deterministisch: alle wählen denselben neuen Host

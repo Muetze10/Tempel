@@ -18,6 +18,9 @@ const IMG = {
 const CARD_IMAGES = { empty: IMG.leer, gold: IMG.gold, trap: IMG.falle };
 const CARD_LABELS = { empty: 'Leer', gold: 'Gold', trap: 'Feuerfalle' };
 
+// Hintergrund des Spielbretts (wird in style.css im .temple-board gesetzt)
+const BOARD_IMAGE = 'images/Tempel_Spielplan_Hintergrund.jpg';
+
 const ROLE_INFO = {
   adventurer: { label: 'Abenteurer', image: IMG.gut,   className: 'role-good' },
   guardian:   { label: 'Wächterin',  image: IMG.boese, className: 'role-bad' }

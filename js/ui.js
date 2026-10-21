@@ -121,6 +121,7 @@ async function showRoleRevealView() {
   roleCardFrontEl.classList.remove('role-good', 'role-bad');
   roleCardFrontEl.classList.add(info.className);
   roleCardImageEl.src = info.image;
+  roleCardImageEl.decoding = 'async';
   roleCardTextEl.textContent = 'Du bist: ' + info.label;
   btnRoleContinue.hidden = true;
 
@@ -178,8 +179,8 @@ function renderMyHand(hand, animate) {
     flip.className = 'my-card-flip' + (animate ? '' : ' no-anim');
     flip.innerHTML = `
       <div class="my-card-inner">
-        <img src="${IMG.karteBack}" class="my-card-face my-card-back" alt="">
-        <img src="${CARD_IMAGES[type]}" class="my-card-face my-card-front" alt="${CARD_LABELS[type]}" title="${CARD_LABELS[type]}">
+        <img src="${IMG.karteBack}" class="my-card-face my-card-back" alt="" decoding="async">
+        <img src="${CARD_IMAGES[type]}" class="my-card-face my-card-front" alt="${CARD_LABELS[type]}" title="${CARD_LABELS[type]}" decoding="async">
       </div>
     `;
     myHandEl.appendChild(flip);
@@ -216,6 +217,7 @@ const shownLogKeys = new Set();
 
 function resetCenterPile() {
   shownLogKeys.clear();
+  lastCornerRole = null;
   centerPileEl.innerHTML = '';
 }
 
@@ -235,6 +237,7 @@ function addCardToCenterPile(type) {
   img.className = 'center-card';
   img.src = CARD_IMAGES[type];
   img.alt = CARD_LABELS[type];
+  img.decoding = 'async';
   img.style.setProperty('--rot', (Math.random() * 26 - 13) + 'deg');
   img.style.setProperty('--dx', (Math.random() * 10 - 5) + 'px');
   img.style.setProperty('--dy', (Math.random() * 10 - 5) + 'px');
@@ -243,6 +246,13 @@ function addCardToCenterPile(type) {
 
 // Für den kleinen "Tick" beim Zug-Counter, wenn sich die Zahl ändert
 let lastTurnsLeft = null;
+
+// zuletzt gezeichnete Rollenkarte in der Ecke (verhindert stetiges Neusetzen)
+let lastCornerRole = null;
+
+// Zwischengespeicherte Restkarten-Zeile: verhindert das Neuanlegen der Icons
+// bei jedem Firebase-Event (siehe renderGame).
+let lastRenderedCountsHtml = null;
 
 // Notfall-Timer des Hosts für eine liegengebliebene Folgeaktion (siehe applyFollowUp)
 let followUpTimer = null;
@@ -273,7 +283,7 @@ function renderSeats(game, uids, { keyHidden, isMyTurn, turnPlayerGone }) {
     let cardsHtml = '';
     for (let c = 0; c < remaining; c++) {
       const spread = c - (remaining - 1) / 2;
-      cardsHtml += `<img src="${IMG.karteBack}" class="seat-card-back" alt=""
+      cardsHtml += `<img src="${IMG.karteBack}" class="seat-card-back" alt="" decoding="async"
         style="--tilt:${spread * 5}deg; --lift:${Math.abs(spread) * 2}px">`;
     }
 
@@ -299,6 +309,7 @@ function renderSeats(game, uids, { keyHidden, isMyTurn, turnPlayerGone }) {
     if (!keyHidden && uid === game.turnPlayerId) {
       const keyEl = document.createElement('img');
       keyEl.src = IMG.key;
+      keyEl.decoding = 'async';
       keyEl.alt = 'Schlüssel';
       keyEl.className = 'turn-key';
       Object.assign(keyEl.style, at(38, 34));
@@ -316,7 +327,11 @@ function renderGame() {
 
   const keyHidden = keyHiddenForRound === game.round;
   const isMyTurn = !keyHidden && game.turnPlayerId === playerId;
-  const turnPlayerName = (latestPlayers[game.turnPlayerId] || {}).name || '?';
+  // Name des Schlüsselinhabers: erst aus der Spielerliste, sonst aus dem
+  // Spielstand (der bleibt, wenn jemand geht - die Anzeige soll nicht "?" zeigen).
+  const turnPlayerName = (latestPlayers[game.turnPlayerId] || {}).name
+    || (latestGamePlayers[game.turnPlayerId] || {}).name
+    || '?';
   turnLabelEl.textContent = keyHidden
     ? 'Neue Runde beginnt …'
     : isMyTurn
@@ -348,8 +363,10 @@ function renderGame() {
   }
 
   // --- Eigene Charakterkarte in der Ecke ---
-  if (myEntry && myEntry.role) {
+  if (myEntry && myEntry.role && myEntry.role !== lastCornerRole) {
+    lastCornerRole = myEntry.role;
     cornerRoleFrontEl.src = ROLE_INFO[myEntry.role].image;
+    cornerRoleFrontEl.decoding = 'async';
     cornerRoleEl.classList.remove('role-good', 'role-bad');
     cornerRoleEl.classList.add(ROLE_INFO[myEntry.role].className);
   }
@@ -388,14 +405,21 @@ function renderGame() {
   const turnsLeft = Math.max(0, n - (game.openedThisRound || 0));
   const tick = lastTurnsLeft !== null && turnsLeft !== lastTurnsLeft;
   lastTurnsLeft = turnsLeft;
-  remainingCountsEl.innerHTML = `
-    <div class="remaining-item"><img src="${IMG.gold}" alt=""><span>${left.gold}×</span></div>
-    <div class="remaining-item"><img src="${IMG.falle}" alt=""><span>${left.trap}×</span></div>
-    <div class="remaining-item"><img src="${IMG.leer}" alt=""><span>${left.empty}×</span></div>
+  // Nur neu setzen, wenn sich etwas aendert - sonst wuerde jede
+  // Firebase-Aktivitaet (z. B. nur ein Herzschlag) die Icons neu anlegen
+  // und den Tick-Animationseffekt stoeren.
+  const countsHtml = `
+    <div class="remaining-item"><img src="${IMG.gold}" alt="" decoding="async"><span>${left.gold}×</span></div>
+    <div class="remaining-item"><img src="${IMG.falle}" alt="" decoding="async"><span>${left.trap}×</span></div>
+    <div class="remaining-item"><img src="${IMG.leer}" alt="" decoding="async"><span>${left.empty}×</span></div>
     <div class="remaining-item remaining-turns${turnsLeft === 1 ? ' turns-last' : ''}" title="Züge in dieser Runde">
       <span class="turns-num${tick ? ' tick' : ''}">${turnsLeft}</span>
       <span class="turns-label">${turnsLeft === 1 ? 'Zug' : 'Züge'}</span>
     </div>`;
+  if (countsHtml !== lastRenderedCountsHtml) {
+    lastRenderedCountsHtml = countsHtml;
+    remainingCountsEl.innerHTML = countsHtml;
+  }
 
   renderCenterPile(game.revealLog);
 }
