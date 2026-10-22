@@ -92,6 +92,19 @@ body.theme-bad  { background: radial-gradient(ellipse at top, #4a1a14 0%, #1a0b0
   }
 }
 
+/* Warteraum nutzt sein eigenes Motiv (body-Klasse kommt aus showRoomView in
+   ui.js). Datei spaeter einfach gegen ein anderes Bild tauschen - gleicher
+   Name, gleicher Pfad, kein Codeanfassen noetig. */
+body.temple-waiting .temple-bg {
+  --tempel-img: url('images/Tempel_Warteraum_Hintergrund.jpg');
+}
+
+@media (max-width: 700px), (max-aspect-ratio: 1/1) {
+  body.temple-waiting .temple-bg {
+    --tempel-img: url('images/Tempel_Warteraum_Hintergrund_klein.jpg');
+  }
+}
+
 /* Ansichten mit viel Text (Lobby, Warteraum, Rollenekarte, Endscreen)
    bekommen eine dezente Dunkelmaske, damit die Inhalte ueber dem Tempel
    ruhig bleiben. Nur die Spielansicht bleibt voll hell. */

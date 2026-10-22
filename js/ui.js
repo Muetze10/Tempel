@@ -86,6 +86,9 @@ function escapeHtml(str) {
 // ANSICHTEN
 // ============================================================
 function hideAllViews() {
+  // Hintergrund-Szene zurücksetzen: alle Ansichten außer dem Warteraum zeigen
+  // den Spielplan als Hintergrund (siehe body.temple-waiting in style.css).
+  document.body.classList.remove('temple-waiting');
   viewLobby.hidden = true;
   viewRoom.hidden = true;
   viewRoleReveal.hidden = true;
@@ -95,6 +98,8 @@ function hideAllViews() {
 
 function showRoomView() {
   hideAllViews();
+  // Warteraum kennt seine eigene Hintergrunddatei (Tempel_Warteraum_Hintergrund)
+  document.body.classList.add('temple-waiting');
   viewRoom.hidden = false;
 }
 
@@ -128,8 +133,7 @@ async function showRoleRevealView() {
       if (i >= 20 && latestStatus === 'playing'
         && latestGamePlayers && Object.keys(latestGamePlayers).length > 0
         && !latestGamePlayers[playerId]) {
-        hideAllViews();
-        viewRoom.hidden = false;
+        showRoomView();
         updateRunningGameHint();
         return;
       }

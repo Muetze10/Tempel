@@ -267,8 +267,7 @@ function enterRoom(roomCode) {
   // Spielplan). Da ist der Browser schon fertig, wenn das Spiel losgeht.
   [IMG.karteBack, BOARD_IMAGE].forEach((src) => { const img = new Image(); img.decoding = 'async'; img.src = src; });
 
-  viewLobby.hidden = true;
-  viewRoom.hidden = false;
+  showRoomView(); // Warteraum + eigener Warteraum-Hintergrund
   roomCodeDisplay.textContent = roomCode;
 
   const roomRef = db.ref('rooms/' + roomCode);
