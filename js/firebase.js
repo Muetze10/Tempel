@@ -7,6 +7,10 @@
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
+// Aktueller Status des Raums (lobby/starting/playing/ended) - vom Status-
+// Listener gepflegt, u. a. für die "Spiel läuft"-Anzeige im Warteraum.
+let latestStatus = 'lobby';
+
 // Anonymer Login: Firebase vergibt pro Browser eine feste uid (bleibt nach
 // Reload erhalten). Die Sicherheitsregeln prüfen genau diese uid.
 let playerId = null;
@@ -201,27 +205,22 @@ async function handleJoinRoom() {
   const room = (await roomRef.get()).val();
   if (!room) return showError('Diesen Raum gibt es nicht. Code prüfen?');
 
+  // currentRoomCode schon hier setzen: resetOrphanedRoom() (Wiederbelebung)
+  // transagiert gegen rooms/<code> und braucht den Zielraum.
+  currentRoomCode = code;
+
   // Stabile Identität: die Auth-uid bleibt pro Browser gleich. Wer schon in
   // players (registriert) oder in gamePlayers (Mitspieler) steht, darf immer
   // wieder rein - auch während "starting" und mitten im Spiel.
   const registered = !!(room.players && room.players[playerId]);
   const wasInGame = !!(room.gamePlayers && room.gamePlayers[playerId]);
 
-  // Ist niemand mehr im Raum, aber ein altes Spiel hängt noch: zurück in die
-  // Lobby. NICHT bei "starting": dort entsteht gerade ein Spiel, das wir nicht
-  // überschreiben dürfen (hängt der Start wirklich, räumt recoverStuckStart auf).
-  const nobodyThere = !room.players || Object.keys(room.players).length === 0;
-  if (nobodyThere && room.status !== 'lobby' && room.status !== 'starting') {
-    await roomRef.update({ status: 'lobby', gamePlayers: null, game: null, replayVotes: null });
-    room.status = 'lobby';
-    room.gamePlayers = null;
-  }
-
   if (room.status === 'starting') {
     if (!registered && !wasInGame) return showError('Das Spiel wird gerade gestartet. Gleich nochmal versuchen.');
-  } else if (room.status !== 'lobby' && !wasInGame) {
-    return showError('Dieses Spiel läuft schon.');
   }
+  // Bei laufendem Spiel darf jeder eintreten - er landet im Warteraum und
+  // wartet aufs nächste Spiel (der Status-Listener zeigt den Hinweis; das
+  // Wiederbeleben eines toten Spiels folgt unten, nach dem Einstieg).
 
   // Maximal 10 Spieler (mehr kann das Spiel nicht austeilen)
   const count = room.players ? Object.keys(room.players).length : 0;
@@ -244,6 +243,18 @@ async function handleJoinRoom() {
   myName = name;
   isHost = room.hostId === playerId;
   enterRoom(code);
+
+  // Toter Raum wiederbeleben: Kein Mitspieler des laufenden Spiels ist noch
+  // wirklich da (Liste leer oder lauter veraltete lastSeen-Stümpfe) -> zurück
+  // in die Lobby. Bewusst NACH enterRoom: die Transaktion braucht den
+  // Raumknoten im lokalen Cache, den erst der Live-Listener füllt. Das eigene
+  // frische Herzschlag-Update zählt nicht, weil resetOrphanedRoom nur
+  // Spielmitglieder prüft - so kann jeder Eintretende ein totes Spiel lösen.
+  if (room.status !== 'lobby' && room.status !== 'starting') {
+    const presentMembers = Object.keys(room.gamePlayers || {})
+      .filter((uid) => isAroundNow(uid, room.players));
+    if (presentMembers.length === 0) await resetOrphanedRoom();
+  }
 }
 
 // --- In den Warteraum wechseln und alles live beobachten ------------------
@@ -270,6 +281,12 @@ function enterRoom(roomCode) {
     roomRef.on('value', () => resolve(true));
   });
 
+  // Status-Listener: Hinweis "Spiel läuft gerade" im Warteraum frisch halten
+  roomRef.child('status').on('value', (snapshot) => {
+    latestStatus = snapshot.val() || 'lobby';
+    updateRunningGameHint();
+  });
+
   // Spielerliste (Live-Synchronisation für alle im Raum)
   roomRef.child('players').on('value', (snapshot) => {
     const players = snapshot.val() || {};
@@ -279,13 +296,14 @@ function enterRoom(roomCode) {
     maybeClaimHost(players);
     scheduleRenderGame(); // FIX: ohne das erschien "Zug überspringen" nie, wenn der Schlüsselinhaber ging
 
-    // Sind während eines Spiels alle gegangen, Raum zurück in die Lobby
-    if (Object.keys(players).length === 0) {
-      roomRef.child('status').get().then((s) => {
-        if (s.val() && s.val() !== 'lobby' && s.val() !== 'starting') {
-          roomRef.update({ status: 'lobby', gamePlayers: null, game: null, replayVotes: null });
-        }
-      });
+    // Totes Spiel? Kein Mitspieler des LAUFENDEN SPIELS ist noch wirklich
+    // anwesend (Liste leer oder lauter Stale-Einträge von Abstürzen). Dann
+    // hängt das Spiel ewig fest - zurück in die Lobby. Warteraum-Gäste halten
+    // es nicht am Leben; so reicht EIN Eintretender, um den Raum zu befreien.
+    const presentMembers = Object.keys(latestGamePlayers || {})
+      .filter((uid) => isAroundNow(uid, players));
+    if (Object.keys(latestGamePlayers || {}).length > 0 && presentMembers.length === 0) {
+      resetOrphanedRoom();
     }
   });
 
@@ -345,6 +363,7 @@ function enterRoom(roomCode) {
 
   roomRef.child('gamePlayers').on('value', (snapshot) => {
     latestGamePlayers = snapshot.val() || {};
+    updateRunningGameHint(); // Warteraum-Hinweis hängt auch davon ab, ob man selbst mitspielt
     if (latestGame && !viewGame.hidden) scheduleRenderGame();
   });
 

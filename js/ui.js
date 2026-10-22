@@ -24,6 +24,7 @@ const btnStartGame = document.getElementById('btn-start-game');
 const btnToggleReady = document.getElementById('btn-toggle-ready');
 const readyCountEl = document.getElementById('ready-count');
 const btnLeaveRoom = document.getElementById('btn-leave-room');
+const roomLiveHintEl = document.getElementById('room-live-hint');
 
 function showError(message) {
   lobbyError.textContent = message;
@@ -49,6 +50,20 @@ function renderPlayerList(players) {
 
   // Start-Button erst ab 3 Spielern aktivieren (Mindestanzahl des Spiels)
   btnStartGame.disabled = entries.length < 3;
+
+  // Auch aus dem Warteraum: weniger als 2 im laufenden Spiel? Dann endet es
+  // gleich (siehe scheduleUnderstaffedCheck).
+  scheduleUnderstaffedCheck();
+}
+
+// Hinweis im Warteraum, dass ein Spiel läuft und man beim nächsten dabei ist.
+// Zeigt er nur, wenn ein Spiel läuft UND man selbst NICHT darin mitspielt
+// (Wiedereinsteiger sitzen ja im Spiel). Der Status-Listener und der
+// gamePlayers-Listener schalten ihn.
+function updateRunningGameHint() {
+  if (!roomLiveHintEl) return;
+  const inGame = !!(latestGamePlayers && latestGamePlayers[playerId]);
+  roomLiveHintEl.hidden = !(latestStatus === 'playing' && !inGame);
 }
 
 // Zeigt an, wie viele Spieler per Abstimmung weiterspielen wollen
@@ -94,6 +109,7 @@ const btnRoleContinue = document.getElementById('btn-role-continue');
 async function showRoleRevealView() {
   hideAllViews();
   viewRoleReveal.hidden = false;
+  roleCardTextEl.textContent = 'Neues Spiel beginnt …'; // bis die eigene Rolle da ist
 
   // Die Rolle kommt über den gamePlayers-Listener, NICHT per get(): get() las
   // beim Rematch den noch leeren Zwischenstand aus dem Cache, fand keine Rolle
@@ -105,7 +121,20 @@ async function showRoleRevealView() {
   for (let i = 0; i < 50 && !myEntry; i++) {
     const e = latestGamePlayers[playerId];
     if (e && e.role && e.dealId && e.dealId.startsWith(prefix)) myEntry = e;
-    else await new Promise((resolve) => setTimeout(resolve, 100));
+    else {
+      // Wartender Gast (Beitritt während des Spiels): Die Verteilung ist da und
+      // ich bin nicht Teil davon - dann zurück in den Warteraum, nicht bis zum
+      // Ende auf eine Rolle warten, die nie kommt.
+      if (i >= 20 && latestStatus === 'playing'
+        && latestGamePlayers && Object.keys(latestGamePlayers).length > 0
+        && !latestGamePlayers[playerId]) {
+        hideAllViews();
+        viewRoom.hidden = false;
+        updateRunningGameHint();
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
   }
   if (!myEntry) { showGameView(); return; }
   const role = myEntry.role;
@@ -146,12 +175,22 @@ function showEndView() {
   hideAllViews();
   viewEnd.hidden = false;
   renderEndView();
+  // Sound: Siegertyp steckt im Spielstand. Nur einmal pro Spiel klingen lassen
+  // (der Listener zeigt den Endscreen auch beim Wiedereinstieg erneut). Raum
+  // gehört zum Schlüssel - zwei Räume können dieselbe Spielnummer haben.
+  showEndView._playedKey = showEndView._playedKey || '';
+  const seqKey = currentRoomCode + '#' + ((latestGame && latestGame.gameNumber) || 0);
+  if (showEndView._playedKey !== seqKey) {
+    showEndView._playedKey = seqKey;
+    playSound('end', latestGame && latestGame.winner === 'adventurer');
+  }
 }
 
 const roundDisplay = document.getElementById('round-display');
 const myHandEl = document.getElementById('my-hand');
 const turnLabelEl = document.getElementById('turn-label');
 const seatsEl = document.getElementById('seats');
+const centerZoneEl = document.getElementById('center-zone');
 const centerPileEl = document.getElementById('center-pile');
 const remainingCountsEl = document.getElementById('remaining-counts');
 const roundBannerEl = document.getElementById('round-banner');
@@ -159,6 +198,7 @@ const roundBannerTextEl = document.getElementById('round-banner-text');
 const cornerRoleEl = document.getElementById('corner-role');
 const cornerRoleFrontEl = document.getElementById('corner-role-front');
 const btnSkipTurn = document.getElementById('btn-skip-turn');
+const roomNoteEl = document.getElementById('room-note');
 
 // Eigene Karten als Flip-Karten. animate=true (neue Austeilung): erst verdeckt,
 // dann nacheinander aufdecken; sonst direkt aufgedeckt.
@@ -199,6 +239,7 @@ function announceRound(roundNumber) {
   roundBannerTextEl.textContent = 'Runde ' + roundNumber;
   roundBannerEl.hidden = false;
   requestAnimationFrame(() => roundBannerEl.classList.add('show'));
+  playSound('round');
   setTimeout(() => {
     roundBannerEl.classList.remove('show');
     setTimeout(() => {
@@ -224,11 +265,16 @@ function resetCenterPile() {
 function renderCenterPile(revealLog) {
   const keys = Object.keys(revealLog || {}).sort();
   if (keys.length < shownLogKeys.size) resetCenterPile(); // neues Spiel
+  let fresh = 0;
   keys.forEach((key) => {
     if (shownLogKeys.has(key)) return;
     shownLogKeys.add(key);
     addCardToCenterPile(revealLog[key].type);
+    fresh++;
   });
+  // Nur bei EIN neuer Karte klingt der Faller - beim Wiedereinstieg wird
+  // der ganze Stapel neu aufgebaut, da waere es nur Geraeusch.
+  if (fresh === 1) playSound('card');
 }
 
 // Legt eine aufgedeckte Karte leicht verdreht auf den Stapel
@@ -257,12 +303,92 @@ let lastRenderedCountsHtml = null;
 // Notfall-Timer des Hosts für eine liegengebliebene Folgeaktion (siehe applyFollowUp)
 let followUpTimer = null;
 
+// Schrumpfstufen bei vielen Spielern – gilt für Fächer UND den
+// abgelegten Stapel in der Mitte, damit beiden genug Platz bleibt.
+function zoneScale(n) {
+  return n <= 5 ? 1 : n <= 7 ? 0.85 : n <= 9 ? 0.72 : 0.6;
+}
+
+// --- Geister im Spiel: automatischer Skip + Sofort-Ende ---------------------
+// JEDER anwesende Client bemerkt selbst, dass einer weg ist - nicht nur der
+// Host mit seinem Skip-Button. Die Wartefrist deckt kurze Funkstille ab; die
+// Transaktion in game.js prüft alles frisch, Wettläufe mehrerer Clients
+// schaden also nicht (nur einer gewinnt).
+
+let absentSkipTimer = null;
+let absentSkipSeq = null;
+
+function clearAbsentSkip() {
+  if (absentSkipTimer) clearTimeout(absentSkipTimer);
+  absentSkipTimer = null;
+  absentSkipSeq = null;
+}
+
+function scheduleAbsentSkip() {
+  const g = latestGame;
+  const gameRuns = g && !g.winner && !g.followUp;
+  const turnGone = gameRuns && !keyHiddenForRound && g.turnPlayerId
+    && !isAroundNow(g.turnPlayerId, latestPlayers);
+  if (!turnGone) { clearAbsentSkip(); return; }
+  const seq = g.moveSeq || 0;
+  if (absentSkipTimer && absentSkipSeq === seq) return; // für diesen Zug schon geplant
+  clearAbsentSkip();
+  absentSkipSeq = seq;
+  // 7–9,5 s: genug Zeit für Funkstille, kurz genug, dass es nicht "hänge" wirkt
+  absentSkipTimer = setTimeout(() => {
+    absentSkipTimer = null;
+    skipGhostTurn(false);
+  }, 7000 + Math.random() * 2500);
+}
+
+let understaffedTimer = null;
+
+function clearUnderstaffedCheck() {
+  if (understaffedTimer) clearTimeout(understaffedTimer);
+  understaffedTimer = null;
+}
+
+// Solange weniger als 2 Mitspieler wirklich da sind, endet das Spiel gleich
+// (Wächter-Sieg). 20 s Gnade - ein Handy, das kurz abtaucht, darf zurückkommen.
+function scheduleUnderstaffedCheck() {
+  const g = latestGame;
+  const present = (g && !g.winner && !g.followUp)
+    ? countPresentGamePlayers()
+    : null;
+  if (present !== 1) { clearUnderstaffedCheck(); updateRoomNote(); return; }
+  if (understaffedTimer) return;
+  understaffedTimer = setTimeout(() => {
+    understaffedTimer = null;
+    endIfUnderstaffed();
+  }, 20000);
+}
+
+// Anweisungen über dem Brett, solange das Spiel stirbt oder jemand fehlt
+function updateRoomNote() {
+  if (!roomNoteEl) return;
+  const g = latestGame;
+  let text = '';
+  if (g && !g.winner && !g.followUp) {
+    const present = countPresentGamePlayers();
+    if (present === 1) text = 'Nur noch ein Spieler dabei – das Spiel endet gleich.';
+    else if (present === 0) text = 'Niemand ist im Spiel – der Raum wird gleich zurückgesetzt.';
+  }
+  roomNoteEl.textContent = text;
+  roomNoteEl.hidden = !text;
+}
+
+// Wie viele Spieler des laufenden Spiels sind wirklich noch anwesend?
+// (gamePlayers minus die, deren lastSeen stale ist)
+function countPresentGamePlayers() {
+  return Object.keys(latestGamePlayers).filter((uid) => isAroundNow(uid, latestPlayers)).length;
+}
+
 // Baut den Spielerkreis auf. Wird nur gerufen, wenn sich der Spielzustand
 // geändert hat (siehe seatsKey in renderGame) - ein Neuaufbau bei jedem
 // Firebase-Event würde die Kartenbilder samt Animation ständig neu starten.
 function renderSeats(game, uids, { keyHidden, isMyTurn, turnPlayerGone }) {
   const n = uids.length;
-  const seatScale = n <= 5 ? 1 : n <= 7 ? 0.85 : n <= 9 ? 0.72 : 0.6;
+  const seatScale = zoneScale(n);
   const myIndex = uids.indexOf(playerId);
   seatsEl.innerHTML = '';
 
@@ -277,6 +403,9 @@ function renderSeats(game, uids, { keyHidden, isMyTurn, turnPlayerGone }) {
     const remaining = hand.empty + hand.gold + hand.trap;
     const isMe = uid === playerId;
     const canPick = isMyTurn && !isMe && remaining > 0 && !revealInProgress;
+    // Sitz ausgrauen, wenn der Spieler gegangen ist (oder sein Tab seit >50 s
+    // nichts gemeldet hat) - man sieht sofort, wessen Karten "Geisterkarten"...
+    const gone = !isAroundNow(uid, latestPlayers);
 
     // Fächer: jede Karte leicht gedreht; mehr Karten = engere Überlappung
     const overlap = -(0.22 + Math.min(remaining, 8) * 0.035);
@@ -288,7 +417,7 @@ function renderSeats(game, uids, { keyHidden, isMyTurn, turnPlayerGone }) {
     }
 
     const seat = document.createElement('div');
-    seat.className = 'seat' + (canPick ? ' seat-pickable' : '');
+    seat.className = 'seat' + (canPick ? ' seat-pickable' : '') + (gone && !isMe ? ' seat-gone' : '');
     Object.assign(seat.style, at(30, 27));
     seat.innerHTML = `
       <div class="seat-fan" style="--fan:${(angle * 180) / Math.PI + 90}deg; --scale:${seatScale}">
@@ -302,7 +431,9 @@ function renderSeats(game, uids, { keyHidden, isMyTurn, turnPlayerGone }) {
     nameEl.className = 'seat-name';
     Object.assign(nameEl.style, at(45, 41));
     nameEl.style.setProperty('--name-scale', seatScale);
-    nameEl.textContent = (entry.name || (latestPlayers[uid] || {}).name || '?') + (isMe ? ' (du)' : '');
+    const goneTag = gone && !isMe ? ' (gegangen)' : '';
+    nameEl.textContent = (entry.name || (latestPlayers[uid] || {}).name || '?') + (isMe ? ' (du)' : '') + goneTag;
+    if (gone && !isMe) nameEl.classList.add('seat-name-gone');
     seatsEl.appendChild(nameEl);
 
     // Schlüssel: groß, zwischen Fächer und Name
@@ -327,6 +458,9 @@ function renderGame() {
 
   const keyHidden = keyHiddenForRound === game.round;
   const isMyTurn = !keyHidden && game.turnPlayerId === playerId;
+  // Host darf überspringen, wenn der Schlüsselinhaber weg ist - jetzt auch
+  // über lastSeen (frisch < 50 s), nicht nur wenn der Listeneintrag fehlt.
+  const turnPlayerGone = !keyHidden && !isAroundNow(game.turnPlayerId, latestPlayers);
   // Name des Schlüsselinhabers: erst aus der Spielerliste, sonst aus dem
   // Spielstand (der bleibt, wenn jemand geht - die Anzeige soll nicht "?" zeigen).
   const turnPlayerName = (latestPlayers[game.turnPlayerId] || {}).name
@@ -336,11 +470,12 @@ function renderGame() {
     ? 'Neue Runde beginnt …'
     : isMyTurn
       ? 'Du hast den Schlüssel – tippe die Karten eines Mitspielers an'
-      : turnPlayerName + ' hat den Schlüssel';
+      : turnPlayerGone
+        ? turnPlayerName + ' ist weg – Zug wird übersprungen …'
+        : turnPlayerName + ' hat den Schlüssel';
   turnLabelEl.classList.toggle('turn-mine', isMyTurn);
+  updateRoomNote();
 
-  // Host darf überspringen, wenn der Schlüsselinhaber weg ist.
-  const turnPlayerGone = !keyHidden && !latestPlayers[game.turnPlayerId];
   btnSkipTurn.hidden = !(isHost && turnPlayerGone);
 
   // FIX: Liegt die Folgeaktion (Rundenwechsel/Spielende) nach 4 s noch bereit,
@@ -387,7 +522,8 @@ function renderGame() {
     n, Object.keys(latestPlayers).length,
     uids.map((uid) => {
       const h = latestGamePlayers[uid].hand;
-      return uid + ':' + h.empty + h.gold + h.trap;
+      // +a/anwesend, +g/gegangen: der Abgang soll sichtbar (ausgegraut) werden
+      return uid + ':' + h.empty + h.gold + h.trap + (isAroundNow(uid, latestPlayers) ? '+a' : '+g');
     }).join(',')
   ].join('|');
   if (seatsKey !== lastRenderedSeatsKey) {
@@ -396,6 +532,8 @@ function renderGame() {
   }
 
   // --- Mitte: Restkarten-Zähler, Zug-Countdown, Ablagestapel ---
+  // Stapelgroesse passt sich der Spielerzahl an (gleiche Stufen wie die Fächer)
+  centerZoneEl.style.setProperty('--pile-scale', zoneScale(uids.length));
   const left = { empty: 0, gold: 0, trap: 0 };
   uids.forEach((uid) => {
     const h = latestGamePlayers[uid].hand;
@@ -422,6 +560,10 @@ function renderGame() {
   }
 
   renderCenterPile(game.revealLog);
+
+  // Geist-Uhrwerk: automatischer Skip und Unterbesessenheits-Check
+  scheduleAbsentSkip();
+  scheduleUnderstaffedCheck();
 }
 
 // --- Charakterkarte in der Ecke: antippen zeigt sie kurz ------------------

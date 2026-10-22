@@ -286,21 +286,79 @@ async function roomTransaction(fn) {
 const isMoveOpen = (room) =>
   room.status === 'playing' && room.game && room.gamePlayers && !room.game.winner && !room.game.followUp;
 
-// --- Zug überspringen (Host-Button) -----------------------------------------
-// Nur gültig, wenn der Schlüsselinhaber weg ist, und nur gegen die Zugnummer,
-// die der Host gesehen hat.
-async function skipAbsentTurn() {
-  if (!latestGame) return;
-  const expectedSeq = latestGame.moveSeq || 0;
+// Ist ein Spieler wirklich noch anwesend? Unterschied zur bloßen players-
+// Liste: Nach einem Absturz stirbt der Eintrag erst nach 45 s durch den
+// Stale-Check anderer Clients (oder gar nie, wenn niemand mehr da ist).
+// Wir messen den lastSeen-Frischturnus - Einträge ohne Zeitstempel (alte
+// Räume / Tests) gelten als da, damit sich daran nichts ändert.
+function isAroundNow(uid, players) {
+  const p = players && players[uid];
+  if (!p) return false;
+  if (!p.lastSeen) return true;
+  return nowMs() - p.lastSeen < 50000;
+}
+
+// --- Zug überspringen --------------------------------------------------------
+// Gemeinsamer Kern für Host-Klick und Auto-Skip: Schlüssel weitergeben, wenn
+// der Inhaber wirklich weg ist. Die Transaktion prüft alles frisch - mehrere
+// Clients dürfen parallel daran glauben, nur einer gewinnt, der Rest läuft
+// ins Leere. againstSeenSeq: Host-Klick gilt nur für die Zugnummer, die der
+// Host gesehen hat; der Auto-Skip verzichtet darauf.
+async function skipGhostTurn(againstSeenSeq) {
   return roomTransaction((room) => {
     const g = room.game;
-    if (!isMoveOpen(room) || (g.moveSeq || 0) !== expectedSeq) return false;
-    if (room.players && room.players[g.turnPlayerId]) return false; // Inhaber ist noch da
+    if (!isMoveOpen(room)) return false;
+    const seen = latestGame ? latestGame.moveSeq || 0 : null;
+    if (againstSeenSeq && (g.moveSeq || 0) !== seen) return false;
+    if (isAroundNow(g.turnPlayerId, room.players)) return false; // Inhaber ist noch da
     const candidates = Object.keys(room.gamePlayers).filter(
-      (uid) => room.players && room.players[uid] && handSize(room.gamePlayers[uid].hand) > 0);
+      (uid) => isAroundNow(uid, room.players) && handSize(room.gamePlayers[uid].hand) > 0);
     if (candidates.length === 0) return false;
     g.turnPlayerId = candidates[Math.floor(Math.random() * candidates.length)];
-    g.moveSeq = expectedSeq + 1; // ein Klick auf die alte Ansicht wird dadurch ungültig
+    g.moveSeq = (g.moveSeq || 0) + 1; // ein Klick auf die alte Ansicht wird dadurch ungültig
+    return true;
+  });
+}
+
+// Host-Klick: unverändert auch ohne Auto-Skip vorhanden ("sofort"-Option).
+async function skipAbsentTurn() {
+  if (!latestGame) return;
+  return skipGhostTurn(true);
+}
+
+// Sofortiges Spielende, wenn nur noch EIN Mitspieler da ist (Wächter gewinnen,
+// wie beim Rundenende mit <2 Anwesen, siehe dealNextRound). Die 20 s
+// Wartefrist läuft in ui.js - ein kurz abgetauchtes Handy soll weitermachen
+// dürfen. Niemand mehr da? Dann übernimmt die Wiederbelebung (Raum zurücksetzen).
+async function endIfUnderstaffed() {
+  return roomTransaction((room) => {
+    if (!isMoveOpen(room)) return false;
+    const present = Object.keys(room.gamePlayers).filter((uid) => isAroundNow(uid, room.players));
+    if (present.length !== 1) return false;
+    endGame(room, 'guardian');
+    return true;
+  });
+}
+
+// Verlassenen Raum zurücksetzen: kein Mitspieler des laufenden oder eines
+// beendeten Spiels mehr anwesend, aber der Spielzustand hängt noch. Wird er
+// von einem Außenstehenden ausgelöst (z. B. beim Beitreten), befreit er so
+// "tote Lobbys", die sonst nie freikämen. Warteraum-Gäste zählen bewusst
+// nicht mit - sie SOLLEN den Reset auslösen können.
+async function resetOrphanedRoom() {
+  return roomTransaction((room) => {
+    if (!room) return false;
+    if (room.status !== 'playing' && room.status !== 'ended') return false;
+    // Entscheidend sind die Mitspieler DES SPIELS, nicht die Raumliste:
+    const members = room.gamePlayers || {};
+    const present = Object.keys(members).filter((uid) => isAroundNow(uid, room.players));
+    if (present.length > 0) return false; // da ist jemand dran
+    room.status = 'lobby';
+    room.game = null;
+    room.gamePlayers = null;
+    room.replayVotes = null;
+    room.statsPending = null; // Ergebnis des abgebrochenen Spiels: niemand verbucht es
+    room.startingAt = null;
     return true;
   });
 }

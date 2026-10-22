@@ -6,13 +6,12 @@
   <meta name="color-scheme" content="dark">
   <title>Tempel des Schreckens – Online</title>
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
+
+  <!-- Vollständiger Tempel als Hintergrund aller Ansichten -->
+  <div class="temple-bg" aria-hidden="true"></div>
 
   <div class="temple-pillars" aria-hidden="true"></div>
 
@@ -58,6 +57,9 @@
           Spiel starten (mind. 3 Spieler)
         </button>
         <p class="hint-text">Nur der Host kann direkt starten.</p>
+        <p id="room-live-hint" class="room-live-hint" hidden>
+          Ein Spiel läuft gerade – du stehst schon im Warteraum und bist beim nächsten Spiel automatisch dabei.
+        </p>
 
         <div class="divider"><span>Oder abstimmen</span></div>
         <button id="btn-toggle-ready" class="btn btn-secondary">Ich will (nochmal) spielen</button>
@@ -97,13 +99,15 @@
         <span class="game-round">Runde <span id="round-display">1</span>/4</span>
         <span id="turn-label" class="turn-label">—</span>
         <button id="btn-skip-turn" class="btn btn-secondary btn-skip" hidden>Zug überspringen (Spieler weg)</button>
+        <button id="btn-sound" class="btn btn-sound" type="button" aria-label="Ton an- oder ausschalten">🔊</button>
+        <span id="room-note" class="room-note" hidden></span>
       </header>
 
       <!-- Tempel-Spielplan: Spieler sitzen im Kreis, Karten fächerförmig zur Mitte -->
       <div class="board-wrap">
         <div class="temple-board">
           <div id="seats" class="seats"></div>
-          <div class="center-zone">
+          <div id="center-zone" class="center-zone">
             <div id="center-pile" class="center-pile"></div>
             <div id="remaining-counts" class="remaining-counts"></div>
           </div>
@@ -141,11 +145,12 @@
   <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 
   <script src="firebase-config.js"></script>
-  <script src="js/config.js?v=16"></script>
-  <script src="js/firebase.js?v=16"></script>
-  <script src="js/stats.js?v=16"></script>
-  <script src="js/game.js?v=16"></script>
-  <script src="js/ui.js?v=16"></script>
-  <script src="js/app.js?v=16"></script>
+  <script src="js/config.js?v=20"></script>
+  <script src="js/sound.js?v=20"></script>
+  <script src="js/firebase.js?v=20"></script>
+  <script src="js/stats.js?v=20"></script>
+  <script src="js/game.js?v=20"></script>
+  <script src="js/ui.js?v=20"></script>
+  <script src="js/app.js?v=20"></script>
 </body>
 </html>

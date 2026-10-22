@@ -2,31 +2,40 @@
   "rules": {
     ".read": false,
     ".write": false,
-
     "config": {
       ".read": false,
       ".write": false
     },
-
     "rooms": {
       ".indexOn": ["lastActivityAt"],
-
       "$code": {
         ".read": "auth != null",
-        ".write": "auth != null && newData.child('protected').val() === data.child('protected').val()",
-
+        ".write": "auth != null && !data.exists()",
         "lastActivityAt": { ".validate": "newData.isNumber()" },
-
         "players": {
+          ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()",
           "$uid": {
+            ".write": "auth != null && auth.uid === $uid",
             "name": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 20" }
           }
         },
         "gamePlayers": {
+          ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()",
           "$uid": {
             "name": { ".validate": "newData.isString() && newData.val().length <= 20" }
           }
-        }
+        },
+        "game":           { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
+        "status":         { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
+        "hostId":         { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
+        "replayVotes":    { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
+        "startingAt":     { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
+        "createdAt":      { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
+        "statsPending":   { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
+        "stats":          { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
+        "gamesPlayed":    { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
+        "lastActivityAt": { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
+        "protected": { ".write": false }
       }
     }
   }
