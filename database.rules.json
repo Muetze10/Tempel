@@ -11,7 +11,10 @@
       "$code": {
         ".read": "auth != null",
         ".write": "auth != null && !data.exists()",
-        "lastActivityAt": { ".validate": "newData.isNumber()" },
+        "lastActivityAt": {
+          ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()",
+          ".validate": "newData.isNumber()"
+        },
         "players": {
           ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()",
           "$uid": {
@@ -34,7 +37,6 @@
         "statsPending":   { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
         "stats":          { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
         "gamesPlayed":    { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
-        "lastActivityAt": { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
         "protected": { ".write": false }
       }
     }

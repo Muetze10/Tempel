@@ -60,11 +60,12 @@ async function ensureLogin() {
   catch (e) { showError('Anmeldung fehlgeschlagen. Seite neu laden?'); return false; }
 }
 
-// 4-stelliger Raum-Code ohne verwechselbare Zeichen (I, O, 0, 1)
+// 6-stelliger Raum-Code ohne verwechselbare Zeichen (I, O, 0, 1) - laenger,
+// damit ein geratener Code praktisch nie einen fremden Raum trifft.
 function generateRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
-  for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
   return code;
 }
 

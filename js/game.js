@@ -304,6 +304,42 @@ function isAroundNow(uid, players) {
 // Clients dürfen parallel daran glauben, nur einer gewinnt, der Rest läuft
 // ins Leere. againstSeenSeq: Host-Klick gilt nur für die Zugnummer, die der
 // Host gesehen hat; der Auto-Skip verzichtet darauf.
+
+// Deckt Geisterkarten in EINEM Zug weiter auf, bis die Runde ihr Ziel erreicht
+// hat oder wieder ein anwesender Spieler Karten hat. Genau das rettet die
+// fachlich saubere Zählweise: openedThisRound muss die Spielranggröße erreichen
+// (siehe revealOneCard), und ohne diesen Falls ging die Runde endlos fest,
+// wenn die Anwesenden ihre Karten alle schon abgelegt hatten.
+function revealGhostCards(room) {
+  const g = room.game;
+  while (true) {
+    // Frisch pro Zug rechnen: eine verteilte Kartenhand kann in der Kette leer werden
+    const goneWithCards = Object.keys(room.gamePlayers).filter(
+      (uid) => !isAroundNow(uid, room.players) && handSize(room.gamePlayers[uid].hand) > 0);
+    if (goneWithCards.length === 0) break;
+
+    const uid = goneWithCards[Math.floor(Math.random() * goneWithCards.length)];
+    revealOneCard(room, uid);
+    // Ende der Kette: ein Sieg ist gefallen, oder der Schlüssel liegt wieder
+    // bei einem Anwesenden - dann zur normalen Zählweise zurückkehren.
+    if (g.followUp) {
+      if (!isAroundNow(g.turnPlayerId, room.players)) {
+        const presentNow = Object.keys(room.gamePlayers).filter(
+          (u) => isAroundNow(u, room.players) && handSize(room.gamePlayers[u].hand) > 0);
+        if (presentNow.length > 0) g.turnPlayerId = presentNow[Math.floor(Math.random() * presentNow.length)];
+      }
+      return true;
+    }
+  }
+  const presentNow = Object.keys(room.gamePlayers).filter(
+    (u) => isAroundNow(u, room.players) && handSize(room.gamePlayers[u].hand) > 0);
+  // Geisterleer ohne Sieg: Schlüssel zurück zu einem Anwesenden geben
+  if (!isAroundNow(g.turnPlayerId, room.players) && presentNow.length > 0) {
+    g.turnPlayerId = presentNow[Math.floor(Math.random() * presentNow.length)];
+  }
+  return presentNow.length > 0;
+}
+
 async function skipGhostTurn(againstSeenSeq) {
   return roomTransaction((room) => {
     const g = room.game;
@@ -311,12 +347,20 @@ async function skipGhostTurn(againstSeenSeq) {
     const seen = latestGame ? latestGame.moveSeq || 0 : null;
     if (againstSeenSeq && (g.moveSeq || 0) !== seen) return false;
     if (isAroundNow(g.turnPlayerId, room.players)) return false; // Inhaber ist noch da
+
+    // Normalfall: Schlüssel an einen anwesenden Spieler mit Karten weitergeben
     const candidates = Object.keys(room.gamePlayers).filter(
       (uid) => isAroundNow(uid, room.players) && handSize(room.gamePlayers[uid].hand) > 0);
-    if (candidates.length === 0) return false;
-    g.turnPlayerId = candidates[Math.floor(Math.random() * candidates.length)];
-    g.moveSeq = (g.moveSeq || 0) + 1; // ein Klick auf die alte Ansicht wird dadurch ungültig
-    return true;
+    if (candidates.length > 0) {
+      g.turnPlayerId = candidates[Math.floor(Math.random() * candidates.length)];
+      g.moveSeq = (g.moveSeq || 0) + 1; // ein Klick auf die alte Ansicht wird dadurch ungültig
+      return true;
+    }
+
+    // Keine anwesenden Spieler mit Karten. Es bleiben nur die Geister - deren
+    // Karten werden automatisch aufgedeckt (im Brettspiel laufen ihre Karten
+    // auch weiter), bis die Runde ihr Ziel erreicht oder der Sieg fällt.
+    return revealGhostCards(room);
   });
 }
 

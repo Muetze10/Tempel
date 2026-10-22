@@ -426,8 +426,31 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 
 .btn-skip { width: auto; padding: 6px 12px; font-size: 0.78rem; }
 
-/* Sound-Knopf (klein, im Spielbrett-Kopf) und Hinweiszeile im Spiel */
-.btn-sound { width: auto; padding: 4px 10px; font-size: 1rem; line-height: 1.4; }
+/* Ton-Schalter: kleine Runde oben rechts in der Spielansicht. Gleiche
+   Stein-Optik wie die Kartenleiste, handgezeichnete Icon statt Emoji. */
+.view-game { position: relative; }
+.btn-sound {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(201, 162, 75, 0.35);
+  border-radius: 50%;
+  background: rgba(23, 20, 15, 0.62);
+  color: var(--sand-100);
+  cursor: pointer;
+  z-index: 5;
+}
+.btn-sound:hover { background: rgba(36, 31, 24, 0.78); }
+.sound-icon { width: 20px; height: 20px; fill: currentColor; }
+.sound-off { display: none; }
+.btn-sound.muted .sound-on { display: none; }
+.btn-sound.muted .sound-off { display: block; }
 .room-note {
   width: 100%;
   font-size: clamp(0.7rem, 2.2vw, 0.85rem);

@@ -15,11 +15,16 @@ if (savedProfile.room) roomCodeInput.value = savedProfile.room;
 const urlraum = new URLSearchParams(location.search).get('raum');
 if (urlraum) roomCodeInput.value = urlraum.toUpperCase().slice(0, 6);
 
-// Sound an/aus (Knopf im Spielbrett-Kopf, Zustand in localStorage)
+// Sound an/aus (Knopf in der rechten Ecke des Spielbretts, Zustand in localStorage)
 const btnSound = document.getElementById('btn-sound');
 function refreshSoundGlyph() {
-  btnSound.textContent = soundMuted() ? '🔇' : '🔊';
+  btnSound.classList.toggle('muted', soundMuted());
 }
+btnSound.addEventListener('click', () => {
+  toggleSound();
+  refreshSoundGlyph();
+});
+refreshSoundGlyph();
 btnSound.addEventListener('click', () => {
   toggleSound();
   refreshSoundGlyph();
