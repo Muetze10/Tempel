@@ -10,7 +10,7 @@
       ".indexOn": ["lastActivityAt"],
       "$code": {
         ".read": "auth != null",
-        ".write": "auth != null && !data.exists()",
+        ".write": "auth != null && (!data.exists() || (root.child('rooms/' + $code + '/players/' + auth.uid).exists() && newData.exists()))",
         "lastActivityAt": {
           ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()",
           ".validate": "newData.isNumber()"

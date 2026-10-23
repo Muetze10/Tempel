@@ -379,6 +379,7 @@ function enterRoom(roomCode) {
 // Übernimmt den Host-Posten, wenn der bisherige nicht mehr in der Liste steht.
 // transaction() löst das Wettrennen mehrerer Clients sauber auf.
 function maybeClaimHost(players) {
+  if (!currentRoomCode) return; // nach Raumverkehr kein Ziel mehr (sonst /rooms/null)
   const ids = Object.keys(players);
   if (ids.length === 0) return;
   // Alles klar? Dann keine Transaktion anstoßen - bei jedem Spieler-Herzschlag
@@ -398,10 +399,11 @@ async function leaveRoom() {
   stopPresence();
   currentRoomCode = null; // verhindert, dass ein spätes Ping uns wieder anlegt
   roomRef.child('players/' + playerId).onDisconnect().cancel();
-  await Promise.all([
-    roomRef.child('players/' + playerId).remove(),
-    roomRef.child('replayVotes/' + playerId).remove()
-  ]);
+  // WICHTIG: die Stimme VOR dem Spielerprofil entfernen - solange der Spieler
+  // unter players steht, gilt er als Raummitglied. Nach dem Entfernen des
+  // Profils verweigern die Regeln (Mitgliedschaft fehlt) und die Stimme bliebe.
+  await roomRef.child('replayVotes/' + playerId).remove();
+  await roomRef.child('players/' + playerId).remove();
 
   ['players', 'hostId', 'replayVotes', 'status', 'game', 'gamePlayers'].forEach((child) => roomRef.child(child).off());
   roomRef.off(); // den ganzen Raumknoten-Listener aus enterRoom wieder lösen
