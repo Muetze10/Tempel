@@ -25,23 +25,29 @@ if (urlraum) {
 
 // Sound an/aus (Knopf in der rechten Ecke des Spielbretts, Zustand in localStorage)
 const btnSound = document.getElementById('btn-sound');
-function refreshSoundGlyph() {
-  btnSound.classList.toggle('muted', soundMuted());
+if (btnSound) {
+  function refreshSoundGlyph() {
+    btnSound.classList.toggle('muted', soundMuted());
+  }
+  btnSound.addEventListener('click', () => {
+    toggleSound();
+    refreshSoundGlyph();
+  });
+  refreshSoundGlyph();
 }
-btnSound.addEventListener('click', () => {
-  toggleSound();
-  refreshSoundGlyph();
-});
-refreshSoundGlyph();
-btnSound.addEventListener('click', () => {
-  toggleSound();
-  refreshSoundGlyph();
-});
-refreshSoundGlyph();
 
 // Lobby
-btnCreateRoom.addEventListener('click', handleCreateRoom);
-btnJoinRoom.addEventListener('click', handleJoinRoom);
+btnCreateRoom.addEventListener('click', () => {
+  const name = (nameInput.value || '').trim();
+  if (!name) { showError('Bitte gib zuerst deinen Namen ein.'); nameInput.focus(); return; }
+  handleCreateRoom();
+});
+btnJoinRoom.addEventListener('click', () => {
+  const code = (roomCodeInput.value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+  if (!code) { showError('Bitte gib einen Raum-Code ein.'); return; }
+  roomCodeInput.value = code;
+  handleJoinRoom();
+});
 
 // Warteraum
 btnStartGame.addEventListener('click', () => startGameInternal());
@@ -53,7 +59,7 @@ btnRoleContinue.addEventListener('click', () => showGameView());
 btnSkipTurn.addEventListener('click', () => skipAbsentTurn());
 
 // Endscreen (für jeden Spieler beide Optionen)
-btnLeaveGame.addEventListener('click', () => { if (confirm('Wirklich das Spiel verlassen?')) leaveRoom(); });
+btnLeaveGame.addEventListener('click', () => { if (!confirm('Wirklich das Spiel verlassen?')) return; if (typeof stopAllSounds === 'function') try { stopAllSounds(); } catch (e) {} leaveRoom(); });
 
 if (btnCopyRoomCode) {
   btnCopyRoomCode.addEventListener('click', async () => {
@@ -92,9 +98,11 @@ if (btnCopyRoomCode) {
 }
 
 btnBackToLobby.addEventListener('click', async () => {
+  if (!confirm('Möchtest du wirklich zurück in den Warteraum?')) return;
+  if (typeof stopAllSounds === 'function') try { stopAllSounds(); } catch (e) {}
   latestGame = null;
   autoStartAttempted = false;
-  resetCenterPile();
+  if (typeof resetCenterPile === 'function') resetCenterPile();
   document.body.classList.remove('theme-good', 'theme-bad');
   // Die Listener bleiben aktiv - sie müssen das nächste Spiel erkennen.
   await db.ref('rooms/' + currentRoomCode).update({

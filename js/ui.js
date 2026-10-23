@@ -96,6 +96,14 @@ function hideAllViews() {
   viewRoleReveal.hidden = true;
   viewGame.hidden = true;
   viewEnd.hidden = true;
+  // Sounds stoppen wenn wir aus dem Spiel herausgehen
+  if (typeof stopAllSounds === 'function') {
+    try { stopAllSounds(); } catch (e) {}
+  }
+  if (typeof endRevealTimer !== 'undefined' && endRevealTimer) {
+    try { clearTimeout(endRevealTimer); } catch (e) {}
+    endRevealTimer = null;
+  }
 }
 
 function showRoomView() {
@@ -177,6 +185,8 @@ function showGameView() {
   if (latestGame) renderGame(); // löst die Aufdeck-Animation der Hand aus
 }
 
+let endRevealTimer = null;
+
 function showEndView() {
   hideAllViews();
   viewEnd.hidden = false;
@@ -188,7 +198,18 @@ function showEndView() {
   const seqKey = currentRoomCode + '#' + ((latestGame && latestGame.gameNumber) || 0);
   if (showEndView._playedKey !== seqKey) {
     showEndView._playedKey = seqKey;
+    // Rollen erst nach 6,5s enthüllen
+    const rolesList = document.getElementById('end-roles-list');
+    if (rolesList) rolesList.style.visibility = 'hidden';
+    if (endRevealTimer) { clearTimeout(endRevealTimer); }
+    endRevealTimer = setTimeout(() => {
+      if (rolesList) rolesList.style.visibility = 'visible';
+    }, 6500);
     playSound('end', latestGame && latestGame.winner === 'adventurer');
+  } else {
+    const rolesList = document.getElementById('end-roles-list');
+    if (rolesList) rolesList.style.visibility = 'visible';
+    if (endRevealTimer) { clearTimeout(endRevealTimer); endRevealTimer = null; }
   }
 }
 
@@ -245,6 +266,7 @@ function announceRound(roundNumber) {
   roundBannerTextEl.textContent = 'Runde ' + roundNumber;
   roundBannerEl.hidden = false;
   requestAnimationFrame(() => roundBannerEl.classList.add('show'));
+  // Rundenansage leiser, nicht aggressiv
   playSound('round');
   setTimeout(() => {
     roundBannerEl.classList.remove('show');

@@ -9,11 +9,30 @@
 // ============================================================
 
 const SOUND_FILES = {
-  card: 'sounds/karte.mp3',
-  round: 'sounds/runde.mp3',
-  'end-good': 'sounds/ende-gut.mp3',
-  'end-bad': 'sounds/ende-boese.mp3'
+  card: 'sounds/Karte Aufdecken.mp3',
+  round: 'sounds/karte.mp3',
+  'end-good': 'sounds/Gute gewinnen.mp3',
+  'end-bad': 'sounds/Böse gewinnen.mp3',
+  trap: 'sounds/Feuerfalle.mp3',
+  gold: 'sounds/Schatz.mp3'
 };
+
+let currentSoundSource = null;
+let currentSoundGain = null;
+
+function stopAllSounds() {
+  try {
+    if (currentSoundSource) {
+      try { currentSoundSource.stop(); } catch (e) {}
+      try { currentSoundSource.disconnect(); } catch (e) {}
+      currentSoundSource = null;
+    }
+    if (currentSoundGain) {
+      try { currentSoundGain.disconnect(); } catch (e) {}
+      currentSoundGain = null;
+    }
+  } catch (e) {}
+}
 
 let audioCtx = null;
 const soundBuffers = {}; // Klangname -> Promise<AudioBuffer>
@@ -128,9 +147,30 @@ function playSound(kind, flag) {
   try {
     loadBuffer(key, ctx)
       .then((buffer) => {
+        // Gewinnsound: alten stoppen
+        if (key === 'end-good' || key === 'end-bad') {
+          stopAllSounds();
+        }
         const src = ctx.createBufferSource();
         src.buffer = buffer;
-        src.connect(ctx.destination);
+        const gain = ctx.createGain();
+        let gainVal = 0.7;
+        if (key === 'card') gainVal = 0.4;
+        else if (key === 'round') gainVal = 0.3;
+        else if (key === 'gold') gainVal = 0.7;
+        else if (key === 'trap') gainVal = 0.85;
+        else if (key === 'end-good') gainVal = 0.9;
+        else if (key === 'end-bad') gainVal = 0.9;
+        gain.gain.setValueAtTime(gainVal, ctx.currentTime);
+        src.connect(gain).connect(ctx.destination);
+        currentSoundSource = src;
+        currentSoundGain = gain;
+        src.onended = () => {
+          if (currentSoundSource === src) {
+            currentSoundSource = null;
+            currentSoundGain = null;
+          }
+        };
         src.start();
       })
       .catch((err) => {
