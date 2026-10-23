@@ -18,6 +18,8 @@ const lobbyError = document.getElementById('lobby-error');
 const connBannerEl = document.getElementById('conn-banner');
 
 const roomCodeDisplay = document.getElementById('room-code-display');
+const btnCopyRoomCode = document.getElementById('btn-copy-room-code');
+const roomCodeCopyHint = document.getElementById('room-code-copy-hint');
 const playerListEl = document.getElementById('player-list');
 const playerCountEl = document.getElementById('player-count');
 const btnStartGame = document.getElementById('btn-start-game');

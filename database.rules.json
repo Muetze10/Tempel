@@ -28,11 +28,21 @@
         "game":           { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
         "status":         { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
         "hostId":         { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
-        "replayVotes":    { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
+        "replayVotes": {
+          ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()",
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && root.child('rooms/' + $code + '/players/' + auth.uid).exists()"
+          }
+        },
         "startingAt":     { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
         "createdAt":      { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
         "statsPending":   { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
-        "stats":          { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
+        "stats": {
+          ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()",
+          "$uid": {
+            ".validate": "newData.isNumber()"
+          }
+        },
         "gamesPlayed":    { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
         "protected": { ".write": false }
       }

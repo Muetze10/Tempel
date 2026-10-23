@@ -146,7 +146,14 @@ function startPresence(roomCode) {
     const now = Date.now() + serverOffset;
     const updates = {};
     Object.entries(players).forEach(([uid, p]) => {
-      if (uid !== playerId && p.lastSeen && now - p.lastSeen > 45000) updates[uid] = null;
+      if (uid === playerId) return;
+      // Verwaiste Einträge ohne Heartbeat nach Gnadenfrist aufräumen
+      if (!p.lastSeen) {
+        const joinedAt = p.joinedAt || 0;
+        if (joinedAt && now - joinedAt > 90000) updates[uid] = null;
+        return;
+      }
+      if (now - p.lastSeen > 45000) updates[uid] = null;
     });
     if (Object.keys(updates).length) playersRef.update(updates);
 

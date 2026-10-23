@@ -47,7 +47,11 @@
 
       <div class="card">
         <p class="room-code-label">Raum-Code zum Teilen:</p>
-        <p id="room-code-display" class="room-code-display"></p>
+        <div class="room-code-row">
+          <p id="room-code-display" class="room-code-display"></p>
+          <button id="btn-copy-room-code" class="btn btn-secondary btn-copy-code" type="button" title="Raum-Code kopieren">Kopieren</button>
+        </div>
+        <p id="room-code-copy-hint" class="room-code-copy-hint" aria-live="polite" hidden>Code kopiert</p>
 
         <div class="divider"><span>Spieler im Raum (<span id="player-count">0</span>)</span></div>
 
@@ -63,7 +67,7 @@
 
         <div class="divider"><span>Oder abstimmen</span></div>
         <button id="btn-toggle-ready" class="btn btn-secondary">Ich will (nochmal) spielen</button>
-        <p id="ready-count" class="hint-text">0 von 0 bereit</p>
+        <p id="ready-count" class="hint-text ready-count-strong">0 von 0 bereit</p>
 
         <div class="divider"><span>Statistiken</span></div>
         <ul id="stats-list" class="stats-list"></ul>
@@ -154,12 +158,12 @@
   <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 
   <script src="firebase-config.js"></script>
-  <script src="js/config.js?v=23"></script>
-  <script src="js/sound.js?v=23"></script>
-  <script src="js/firebase.js?v=23"></script>
-  <script src="js/stats.js?v=23"></script>
-  <script src="js/game.js?v=23"></script>
-  <script src="js/ui.js?v=23"></script>
-  <script src="js/app.js?v=23"></script>
+  <script src="js/config.js?v=24"></script>
+  <script src="js/sound.js?v=24"></script>
+  <script src="js/firebase.js?v=24"></script>
+  <script src="js/stats.js?v=24"></script>
+  <script src="js/game.js?v=24"></script>
+  <script src="js/ui.js?v=24"></script>
+  <script src="js/app.js?v=24"></script>
 </body>
 </html>
