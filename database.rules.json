@@ -40,7 +40,8 @@
         "stats": {
           ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()",
           "$uid": {
-            ".validate": "newData.isNumber()"
+            ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()",
+            ".validate": "newData.hasChildren()"
           }
         },
         "gamesPlayed":    { ".write": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()" },
