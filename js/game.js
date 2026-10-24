@@ -459,14 +459,8 @@ function revealOneCard(room, targetUid) {
   hand[type]--;
 
   g.openedThisRound++;
-  if (type === 'gold') {
-    g.totalGoldFound++;
-    if (typeof playSound === 'function') playSound('gold');
-  }
-  if (type === 'trap') {
-    g.totalTrapsFound++;
-    if (typeof playSound === 'function') playSound('trap');
-  }
+  if (type === 'gold') g.totalGoldFound++;
+  if (type === 'trap') g.totalTrapsFound++;
 
   // Log-Schlüssel = laufende Nummer (NICHT die Uhrzeit: Geräteuhren gehen verschieden)
   g.revealLog = g.revealLog || {};

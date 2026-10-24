@@ -98,11 +98,12 @@ if (btnCopyRoomCode) {
 }
 
 btnBackToLobby.addEventListener('click', async () => {
-  if (!confirm('Möchtest du wirklich zurück in den Warteraum?')) return;
-  if (typeof stopAllSounds === 'function') try { stopAllSounds(); } catch (e) {}
   latestGame = null;
   autoStartAttempted = false;
   if (typeof resetCenterPile === 'function') resetCenterPile();
+  // Musik stoppen + laufenden Endscreen-Timer verwerfen
+  if (typeof stopAllSounds === 'function') stopAllSounds();
+  if (typeof endScreenTimer !== 'undefined' && endScreenTimer) { clearTimeout(endScreenTimer); endScreenTimer = null; }
   document.body.classList.remove('theme-good', 'theme-bad');
   // Die Listener bleiben aktiv - sie müssen das nächste Spiel erkennen.
   await db.ref('rooms/' + currentRoomCode).update({

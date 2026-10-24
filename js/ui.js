@@ -96,13 +96,10 @@ function hideAllViews() {
   viewRoleReveal.hidden = true;
   viewGame.hidden = true;
   viewEnd.hidden = true;
-  // Sounds stoppen wenn wir aus dem Spiel herausgehen
-  if (typeof stopAllSounds === 'function') {
-    try { stopAllSounds(); } catch (e) {}
-  }
-  if (typeof endRevealTimer !== 'undefined' && endRevealTimer) {
-    try { clearTimeout(endRevealTimer); } catch (e) {}
-    endRevealTimer = null;
+  // Laufender Endscreen-Timer ist hinfällig (z. B. zurück in den Warteraum)
+  if (typeof endScreenTimer !== 'undefined' && endScreenTimer) {
+    clearTimeout(endScreenTimer);
+    endScreenTimer = null;
   }
 }
 
@@ -123,6 +120,8 @@ const btnRoleContinue = document.getElementById('btn-role-continue');
 
 async function showRoleRevealView() {
   hideAllViews();
+  // laufender (Sieges-)Sound wird beendet, ein neues Spiel beginnt
+  if (typeof stopAllSounds === 'function') stopAllSounds();
   viewRoleReveal.hidden = false;
   roleCardTextEl.textContent = 'Neues Spiel beginnt …'; // bis die eigene Rolle da ist
 
@@ -185,32 +184,31 @@ function showGameView() {
   if (latestGame) renderGame(); // löst die Aufdeck-Animation der Hand aus
 }
 
-let endRevealTimer = null;
+let endScreenTimer = null;
 
-function showEndView() {
+function switchToEndView() {
   hideAllViews();
   viewEnd.hidden = false;
   renderEndView();
-  // Sound: Siegertyp steckt im Spielstand. Nur einmal pro Spiel klingen lassen
-  // (der Listener zeigt den Endscreen auch beim Wiedereinstieg erneut). Raum
-  // gehört zum Schlüssel - zwei Räume können dieselbe Spielnummer haben.
+}
+
+// Gewinnsound klingt, das SPIELFELD bleibt noch 6,5 s stehen - dann erst der
+// Endscreen mit der Rollenenthüllung.
+function showEndView() {
   showEndView._playedKey = showEndView._playedKey || '';
   const seqKey = currentRoomCode + '#' + ((latestGame && latestGame.gameNumber) || 0);
   if (showEndView._playedKey !== seqKey) {
     showEndView._playedKey = seqKey;
-    // Rollen erst nach 6,5s enthüllen
-    const rolesList = document.getElementById('end-roles-list');
-    if (rolesList) rolesList.style.visibility = 'hidden';
-    if (endRevealTimer) { clearTimeout(endRevealTimer); }
-    endRevealTimer = setTimeout(() => {
-      if (rolesList) rolesList.style.visibility = 'visible';
-    }, 6500);
     playSound('end', latestGame && latestGame.winner === 'adventurer');
-  } else {
-    const rolesList = document.getElementById('end-roles-list');
-    if (rolesList) rolesList.style.visibility = 'visible';
-    if (endRevealTimer) { clearTimeout(endRevealTimer); endRevealTimer = null; }
+    if (endScreenTimer) clearTimeout(endScreenTimer);
+    endScreenTimer = setTimeout(() => {
+      endScreenTimer = null;
+      switchToEndView();
+    }, 6500);
+    return;
   }
+  // Wiedereinstieg in ein schon gehörtes Ende: Endscreen direkt zeigen
+  if (!endScreenTimer) switchToEndView();
 }
 
 const roundDisplay = document.getElementById('round-display');
@@ -300,9 +298,14 @@ function renderCenterPile(revealLog) {
     addCardToCenterPile(revealLog[key].type);
     fresh++;
   });
-  // Nur bei EIN neuer Karte klingt der Faller - beim Wiedereinstieg wird
-  // der ganze Stapel neu aufgebaut, da waere es nur Geraeusch.
-  if (fresh === 1) playSound('card');
+  // Der Stapel aktualisiert sich bei allen Clients über den revealLog - deshalb
+  // klingt der Karteneffekt hier (Gold/Falle/Karte), nicht nur beim Aufdecker.
+  // Nur bei EINER neuen Karte klingt es - beim Wiedereinstieg (ganzer Stapel
+  // neu aufgebaut) wäre es nur Geraeusch.
+  if (fresh === 1) {
+    const freshType = revealLog[keys[keys.length - 1]].type;
+    playSound(freshType === 'gold' ? 'gold' : freshType === 'trap' ? 'trap' : 'card');
+  }
 }
 
 // Legt eine aufgedeckte Karte leicht verdreht auf den Stapel
