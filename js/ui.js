@@ -488,22 +488,26 @@ function renderGame() {
   roundDisplay.textContent = game.round;
 
   const keyHidden = keyHiddenForRound === game.round;
-  const isMyTurn = !keyHidden && game.turnPlayerId === playerId;
+  // Spiel beendet (6,5 s Musikfenster / Endscreen): nichts ist mehr klickbar.
+  const gameOver = !!game.winner;
+  const isMyTurn = !keyHidden && !gameOver && game.turnPlayerId === playerId;
   // Host darf überspringen, wenn der Schlüsselinhaber weg ist - jetzt auch
   // über lastSeen (frisch < 50 s), nicht nur wenn der Listeneintrag fehlt.
-  const turnPlayerGone = !keyHidden && !isAroundNow(game.turnPlayerId, latestPlayers);
+  const turnPlayerGone = !keyHidden && !gameOver && !isAroundNow(game.turnPlayerId, latestPlayers);
   // Name des Schlüsselinhabers: erst aus der Spielerliste, sonst aus dem
   // Spielstand (der bleibt, wenn jemand geht - die Anzeige soll nicht "?" zeigen).
   const turnPlayerName = (latestPlayers[game.turnPlayerId] || {}).name
     || (latestGamePlayers[game.turnPlayerId] || {}).name
     || '?';
-  turnLabelEl.textContent = keyHidden
-    ? 'Neue Runde beginnt …'
-    : isMyTurn
-      ? 'Du hast den Schlüssel – tippe die Karten eines Mitspielers an'
-      : turnPlayerGone
-        ? turnPlayerName + ' ist weg – Zug wird übersprungen …'
-        : turnPlayerName + ' hat den Schlüssel';
+  turnLabelEl.textContent = gameOver
+    ? 'Spiel beendet'
+    : keyHidden
+      ? 'Neue Runde beginnt …'
+      : isMyTurn
+        ? 'Du hast den Schlüssel – tippe die Karten eines Mitspielers an'
+        : turnPlayerGone
+          ? turnPlayerName + ' ist weg – Zug wird übersprungen …'
+          : turnPlayerName + ' hat den Schlüssel';
   turnLabelEl.classList.toggle('turn-mine', isMyTurn);
   updateRoomNote();
 

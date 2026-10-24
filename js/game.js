@@ -430,7 +430,7 @@ async function revealCard(targetUid) {
     if (!revealed) {
       // Technisch gescheitert (Timeout/Verbindung)? Nur dann melden - eine
       // reguläre Ablehnung (jemand war schneller) soll still vorbeigehen.
-      if (latestGame && latestGame.turnPlayerId === playerId && !latestGame.followUp) {
+      if (!latestGame.winner && latestGame.turnPlayerId === playerId && !latestGame.followUp) {
         alert('Der Zug konnte nicht gespeichert werden. Bitte nochmal tippen.');
       }
       return;

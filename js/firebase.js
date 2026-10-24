@@ -360,6 +360,9 @@ function enterRoom(roomCode) {
     if (newGame && newGame.winner && newGame.winner !== lastHandledWinner) {
       lastHandledWinner = newGame.winner;
       processPendingStats().catch(console.error);
+      // Brett einmal final zeichnen: die Sitze müssen unanklickbar werden,
+      // solange der Gewinnsound läuft (6,5 s bis zum Endscreen).
+      if (!viewGame.hidden) scheduleRenderGame();
       showEndView();
       return;
     }

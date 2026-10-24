@@ -1,13 +1,20 @@
 # Spiel-Sounds
 
-`karte.mp3` (Karte fällt auf den Stapel), `runde.mp3` (Runden-Gong),
-`ende-gut.mp3` (Abenteurer-Sieg), `ende-boese.mp3` (Wächterinnen-Sieg).
+| Datei | Wann klingt sie |
+| --- | --- |
+| `Karte Aufdecken.mp3` (neutrale Karte) | eine Karte fällt auf den Ablagestapel |
+| `Schatz.mp3` | eine Goldschatz-Karte wird aufgedeckt |
+| `Feuerfalle.mp3` | eine Feuerfalle wird aufgedeckt |
+| `Gute gewinnen.mp3` | Abenteurer-Sieg (Endscreen folgt nach 6,5 s) |
+| `Böse gewinnen.mp3` | Wächterinnen-Sieg (Endscreen folgt nach 6,5 s) |
+| `Runde.mp3` *(optional)* | Runden-Gong; **fehlt sie,** summt der synthetische Gong aus `js/sound.js` |
 
 Eigene Klänge einsetzen:
 1. Die Dateien einfach ersetzen (gleiche Namen behalten).
 2. Andere Dateinamen? Nur in der SOUND_FILES-Map anpassen (`js/sound.js`).
-3. Kompakt bleiben: 64 kbit/s Mono reichen für diese kurzen Klänge völlig aus.
+3. Kurz halten und komprimieren (Mono, ~128 kbit/s reichen).
 
-Die Klänge wurden aus den Web-Audio-Wellenformen von js/sound.js
-gerendert (siehe Git-Geschichte); js/sound.js hält dieselben Wellen
-als Rückfall bereit, z. B. wenn das Laden über file:// nicht geht.
+Schlägt das Laden fehl (z. B. lokal über `file://`), hält `js/sound.js`
+dieselben Wellen als Rückfall bereit.
+
+

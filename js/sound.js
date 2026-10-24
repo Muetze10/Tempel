@@ -10,7 +10,9 @@
 
 const SOUND_FILES = {
   card: 'sounds/Karte Aufdecken.mp3',
-  round: 'sounds/karte.mp3',
+  // Kein Runden-Gong als Datei im Repo - der synthetische Gong aus dieser
+  // Datei übernimmt, bis du eine sounds/Runde.mp3 ablegst.
+  round: 'sounds/Runde.mp3',
   'end-good': 'sounds/Gute gewinnen.mp3',
   'end-bad': 'sounds/Böse gewinnen.mp3',
   trap: 'sounds/Feuerfalle.mp3',
@@ -62,14 +64,17 @@ function getCtx() {
 }
 
 function loadBuffer(key, ctx) {
-  if (!soundBuffers[key]) {
-    soundBuffers[key] = fetch(SOUND_FILES[key])
-      .then((res) => {
-        if (!res.ok) throw new Error('Klang fehlt');
-        return res.arrayBuffer();
-      })
-      .then((raw) => ctx.decodeAudioData(raw));
-  }
+  // Bei Fehlern wieder verwerfen: sonst bliebe das abgelehnte Promise für immer
+  // im Cache und der Klang würde trotz später wieder funktionierender
+  // Verbindung nie mehr erklingen.
+  const load = () => fetch(SOUND_FILES[key])
+    .then((res) => {
+      if (!res.ok) throw new Error('Klang fehlt');
+      return res.arrayBuffer();
+    })
+    .then((raw) => ctx.decodeAudioData(raw))
+    .catch((err) => { delete soundBuffers[key]; throw err; });
+  soundBuffers[key] = soundBuffers[key] || load();
   return soundBuffers[key];
 }
 
@@ -131,6 +136,8 @@ function makeEndBuffer(ctx, good) {
 function fallbackBuffer(kind, flag, ctx) {
   try {
     if (kind === 'card') return makeCardBuffer(ctx);
+    // Gold/Falle ohne Datei: kartennaher Rückfall statt Siegesfanfare
+    if (kind === 'gold' || kind === 'trap') return makeCardBuffer(ctx);
     if (kind === 'round') return makeRoundBuffer(ctx);
     return makeEndBuffer(ctx, flag !== false);
   } catch (err) {
