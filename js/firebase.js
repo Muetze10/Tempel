@@ -273,7 +273,10 @@ function enterRoom(roomCode) {
 
   // Bilder vorwärmen, die der Spielstart sofort braucht (Fächer-Rückseite,
   // Spielplan). Da ist der Browser schon fertig, wenn das Spiel losgeht.
-  [IMG.karteBack, BOARD_IMAGE].forEach((src) => { const img = new Image(); img.decoding = 'async'; img.src = src; });
+  // PLUS Rollen-Reveal: Bild der Rollenkarte (Rückseite) und beide
+  // Rollenporträts - sonst war die Karte beim Reveal erstmal LEER(durchsichtig).
+  [IMG.karteBack, BOARD_IMAGE, 'images/Karakter_Hintergrund.jpg', IMG.gut, IMG.boese]
+    .forEach((src) => { const img = new Image(); img.decoding = 'async'; img.src = src; });
 
   showRoomView(); // Warteraum + eigener Warteraum-Hintergrund
   roomCodeDisplay.textContent = roomCode;
