@@ -436,6 +436,8 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   justify-content: center;
   gap: 12px;
   flex-wrap: wrap;
+  /* Platz für den absolut positonierten Ton-Schalter oben rechts */
+  padding: 0 52px 0 8px;
 }
 
 .game-round {
@@ -447,6 +449,10 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 .turn-label {
   font-size: clamp(0.75rem, 2.3vw, 0.95rem);
   opacity: 0.85;
+  /* Langer Text ("Du hast den Schlüssel – tippe die Karten …") darf umbrechen:
+     bei langen Namen wurde er sonst hinter dem Ton-Schalter abgeschnitten. */
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 
 .turn-label.turn-mine { color: var(--gold-300); opacity: 1; font-weight: 600; }
