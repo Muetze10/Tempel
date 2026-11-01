@@ -382,6 +382,10 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
 
 .role-card.flipped .role-card-inner { transform: rotateY(180deg); }
 
+/* Kurzes Aufblitzen der Rolle beim Neuaufbau verhindern: für den Moment der
+   Rückstellung läuft die Umdreh-Animation NICHT (siehe showRoleRevealView). */
+.role-card.no-flip-anim .role-card-inner { transition: none; }
+
 .role-card-back, .role-card-front {
   position: absolute;
   inset: 0;

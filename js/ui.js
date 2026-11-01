@@ -159,13 +159,18 @@ async function showRoleRevealView() {
       `Diesmal im Spiel: ${g.totalAdventurers} Abenteurer · ${g.totalGuardians} Wächterinnen`;
   }
 
+  // Kartenrückstellung OHNE Umdreh-Animation: sonst drehte die Karte beim
+  // Erscheinen des Reveals sichtbar zurück und die Rolle blitze auf.
+  roleCardEl.classList.add('no-flip-anim');
   roleCardEl.classList.remove('flipped');
+  void roleCardEl.offsetWidth; // Reflow: den Übergangs-Kill wirklich anwenden
   roleCardFrontEl.classList.remove('role-good', 'role-bad');
   roleCardFrontEl.classList.add(info.className);
   roleCardImageEl.src = info.image;
   roleCardImageEl.decoding = 'async';
   roleCardTextEl.textContent = 'Du bist: ' + info.label;
   btnRoleContinue.hidden = true;
+  requestAnimationFrame(() => { roleCardEl.classList.remove('no-flip-anim'); });
 
   roleCardEl.onclick = () => {
     roleCardEl.classList.add('flipped');
