@@ -877,6 +877,11 @@ input[type="text"]::placeholder { color: #ffffff; opacity: 0.4; }
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Nach 'settled' (siehe switchToEndView) gilt die eingefrorene Einblend-
+   Animation nicht mehr - Titel und Rollen stehen immer voll sichtbar da. */
+.view-endscreen.settled .end-title,
+.view-endscreen.settled .end-role-item { animation: none; opacity: 1; }
+
 .end-role-image {
   width: clamp(70px, 15vw, 150px);
   aspect-ratio: 2 / 3;

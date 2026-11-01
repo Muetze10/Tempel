@@ -195,6 +195,12 @@ function switchToEndView() {
   hideAllViews();
   viewEnd.hidden = false;
   renderEndView();
+  // Sicherheitsnetz: friert eine Einblend-Animation ein (Hintergrund-Tab,
+  // Browser-Throttling), blieben Titel und Rollen dauerhaft unsichtbar.
+  // Nach 1,5 s schaltet 'settled' die Animationen aus - dann gilt der
+  // unsichtbare Start-Zustand nicht mehr und alles ist voll sichtbar.
+  viewEnd.classList.remove('settled');
+  setTimeout(() => { viewEnd.classList.add('settled'); }, 1500);
 }
 
 // Gewinnsound klingt, das SPIELFELD bleibt noch 6,5 s stehen - dann erst der
